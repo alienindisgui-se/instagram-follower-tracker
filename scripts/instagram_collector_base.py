@@ -142,9 +142,9 @@ class InstagramCollectorBase:
 
         # Set different colors based on report type
         color_map = {
-            "Daily": 0x00ff88,    # Green
-            "Weekly": 0xff8800,   # Orange  
-            "Monthly": 0x8800ff   # Purple
+            "Daily":    0x0099ff,   # Blue
+            "Weekly":   0x00ff88,   # Green
+            "Monthly":  0x8800ff    # Purple
         }
         embed_color = color_map.get(report_type, 0x0099ff)  # Default to blue if unknown
 
