@@ -140,10 +140,18 @@ class InstagramCollectorBase:
             
             lines.append(f"**{report['username']}** has {report['count']} followers {delta_text} since {period}.")
 
+        # Set different colors based on report type
+        color_map = {
+            "Daily": 0x00ff88,    # Green
+            "Weekly": 0xff8800,   # Orange  
+            "Monthly": 0x8800ff   # Purple
+        }
+        embed_color = color_map.get(report_type, 0x0099ff)  # Default to blue if unknown
+
         embed = {
             "title": f"📊 Instagram {report_type} Report {datetime.now().strftime('%Y-%m-%d')}",
             "description": "\n".join(lines),
-            "color": 0x0099ff
+            "color": embed_color
         }
         payload = {
             "embeds": [embed]
