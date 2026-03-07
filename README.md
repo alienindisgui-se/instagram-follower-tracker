@@ -112,8 +112,8 @@ The system stores follower data in `data/instagram_follower_history.json`:
 | Workflow | Schedule | Description |
 |----------|----------|-------------|
 | Daily Tracker | `0 6 * * *` | Runs daily at 06:00 UTC |
-| Weekly Tracker | `0 6 * * 0` | Runs Sundays at 06:00 UTC |
-| Monthly Tracker | `0 6 1 * *` | Runs 1st of month at 06:00 UTC |
+| Weekly Tracker | `30 6 * * 0` | Runs Sundays at 06:30 UTC |
+| Monthly Tracker | `0 7 1 * *` | Runs 1st of month at 07:00 UTC |
 
 ### Required GitHub Secrets
 
