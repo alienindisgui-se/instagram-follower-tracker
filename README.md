@@ -5,9 +5,9 @@
 ![Repo Size](https://img.shields.io/github/repo-size/alienindisgui-se/instagram-follower-tracker?style=for-the-badge&color=blue)
 ![License](https://img.shields.io/github/license/alienindisgui-se/instagram-follower-tracker?style=for-the-badge&color=green)
 
-![Daily](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-daily-tracker.yml?branch=update-daily-follower-data&label=Daily%20Update&logo=instagram&style=for-the-badge&color=0099FF)
-![Weekly](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-weekly-tracker.yml?branch=update-daily-follower-data&label=Weekly%20Update&logo=instagram&style=for-the-badge&color=00FF88)
-![Monthly](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-monthly-tracker.yml?branch=update-daily-follower-data&label=Monthly%20Update&logo=instagram&style=for-the-badge&color=8800FF)
+![Daily](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-daily-tracker.yml?branch=main&label=Daily%20Update&logo=instagram&style=for-the-badge&color=0099FF)
+![Weekly](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-weekly-tracker.yml?branch=main&label=Weekly%20Update&logo=instagram&style=for-the-badge&color=00FF88)
+![Monthly](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-monthly-tracker.yml?branch=main&label=Monthly%20Update&logo=instagram&style=for-the-badge&color=8800FF)
 
 A sophisticated Python-based system for automated Instagram follower tracking with daily, weekly, and monthly comparison reports, Discord webhook notifications, GitHub Actions automation, and intelligent historical data management.
 
