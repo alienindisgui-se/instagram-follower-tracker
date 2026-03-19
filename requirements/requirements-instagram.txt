@@ -2,7 +2,6 @@
 
 # HTTP requests
 requests==2.31.0
-curl-cffi==0.5.10
 
 # Environment variables
 python-dotenv==1.0.0

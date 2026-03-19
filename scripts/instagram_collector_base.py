@@ -10,12 +10,10 @@ import os
 import random
 import sys
 import time
-import uuid
-import re
 from typing import Dict, Optional, List
 from datetime import datetime, timezone, timedelta
 
-from curl_cffi import requests
+import cloudscraper
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -33,58 +31,13 @@ class InstagramCollectorBase:
         self.config_file = config_file
         self.data_file = data_file
         self.discord_webhook = discord_webhook or os.getenv("IG_TRACKER_DISCORD_WEBHOOK")
-        self.session = requests.Session()
         
-        # Updated User-Agent to current Instagram version (308.0.0.36.109)
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Linux; Android 12; SM-A115M Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/100.0.4896.127 Mobile Safari/537.36 Instagram 308.0.0.36.109 Android (31/12; 280dpi; 720x1411; samsung; SM-A115M; a11q; qcom; en_US; 534961943)",
-            "x-ig-app-id": "936619743392459",
-            "x-ig-device-id": self._generate_device_id(),
-            "accept": "*/*",
-            "accept-language": "en-US,en;q=0.9",
-            "accept-encoding": "gzip, deflate, br",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin",
-            "x-requested-with": "XMLHttpRequest"
-        })
+        # Use cloudscraper for Cloudflare bypass
+        self.scraper = cloudscraper.create_scraper()
 
         # Load config
         self.usernames = self._load_config()
-        self._setup_session()
 
-    def _generate_device_id(self) -> str:
-        """Generate a random device ID for Instagram API."""
-        return str(uuid.uuid4()).replace('-', '')[:16]
-
-    def _setup_session(self):
-        """Setup session with cookies and authentication."""
-        cookie_file = "config/instagram_session.json"
-        
-        # Load existing session cookies if available
-        if os.path.exists(cookie_file):
-            try:
-                with open(cookie_file, 'r') as f:
-                    cookies = json.load(f)
-                    for name, value in cookies.items():
-                        self.session.cookies.set(name, value)
-                logger.info("Loaded existing session cookies")
-            except Exception as e:
-                logger.warning("Failed to load session cookies: " + str(e))
-
-    def _save_session(self):
-        """Save session cookies to file."""
-        cookie_file = "config/instagram_session.json"
-        try:
-            cookies = {}
-            for cookie in self.session.cookies:
-                cookies[cookie.name] = cookie.value
-            os.makedirs(os.path.dirname(cookie_file), exist_ok=True)
-            with open(cookie_file, 'w') as f:
-                json.dump(cookies, f)
-            logger.info("Saved session cookies")
-        except Exception as e:
-            logger.warning("Failed to save session cookies: " + str(e))
 
     def _load_config(self) -> list:
         """Load usernames from config file."""
@@ -117,100 +70,34 @@ class InstagramCollectorBase:
             json.dump(data, f, indent=2)
 
     def get_follower_count(self, username: str) -> Optional[int]:
-        """Get follower count for a username using mobile API."""
-        url = "https://i.instagram.com/api/v1/users/web_profile_info/?username=" + username
+        """Get follower count for a username using Instapeep.com API."""
+        url = f"https://instapeep.com/api/profile/{username}"
         max_retries = 3
         
         for attempt in range(max_retries):
             try:
-                response = self.session.get(url, timeout=30)
-                logger.info("Request to " + url + " returned status " + str(response.status_code))
+                response = self.scraper.get(url, timeout=30)
+                logger.info(f"Request to {url} returned status {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
-                    user_data = data.get("data", {}).get("user", {})
-                    follower_count = user_data.get("edge_followed_by", {}).get("count")
+                    follower_count = data.get("follower_count")
                     if follower_count is not None:
-                        logger.info("Extracted follower count: " + str(follower_count))
+                        logger.info(f"Extracted follower count: {follower_count}")
                         return int(follower_count)
                     else:
-                        logger.warning("No follower count found in response for " + username)
-                elif response.status_code == 401:
-                    # Try to refresh session or handle authentication
-                    logger.warning("401 Unauthorized for " + username + ". Attempting to refresh session...")
-                    refresh_success = self._refresh_session()
-                    if refresh_success and attempt < max_retries - 1:
-                        # Wait a bit before retrying
-                        time.sleep(2 ** attempt)  # Exponential backoff
-                        continue
-                    # Retry once after session refresh
-                    response = self.session.get(url, timeout=30)
-                    if response.status_code == 200:
-                        data = response.json()
-                        user_data = data.get("data", {}).get("user", {})
-                        follower_count = user_data.get("edge_followed_by", {}).get("count")
-                        if follower_count is not None:
-                            logger.info("Successfully extracted follower count after session refresh: " + str(follower_count))
-                            return int(follower_count)
-                    else:
-                        logger.error("Still getting " + str(response.status_code) + " after session refresh for " + username)
-                elif response.status_code in [403, 429]:
-                    logger.error("Security Block: Received " + str(response.status_code) + " status code. Exiting to prevent further requests.")
-                    sys.exit(1)
+                        logger.warning(f"No follower count found in response for {username}")
                 else:
-                    logger.warning("Unexpected status code " + str(response.status_code) + " for " + username)
+                    logger.warning(f"HTTP {response.status_code} for {username}")
                     
             except Exception as e:
-                logger.error("Error fetching data for " + username + ": " + str(e))
+                logger.error(f"Error fetching data for {username}: {e}")
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)  # Exponential backoff
                     continue
                     
         return None
 
-    def _refresh_session(self):
-        """Attempt to refresh the Instagram session."""
-        # Clear existing cookies
-        self.session.cookies.clear()
-        
-        # Generate new device ID
-        new_device_id = self._generate_device_id()
-        self.session.headers.update({"x-ig-device-id": new_device_id})
-        
-        # Try to get fresh session by visiting Instagram homepage
-        try:
-            response = self.session.get("https://www.instagram.com/", timeout=10)
-            if response.status_code == 200:
-                # Extract CSRF token if available
-                csrf_match = re.search(r'"csrf_token":"([^"]+)"', response.text)
-                if csrf_match:
-                    self.session.headers.update({"x-csrftoken": csrf_match.group(1)})
-                # Also try to extract other session tokens
-                self._extract_session_tokens(response.text)
-                logger.info("Session refreshed successfully")
-                self._save_session()
-                return True
-        except Exception as e:
-            logger.warning("Failed to refresh session: " + str(e))
-        return False
-
-    def _extract_session_tokens(self, html_content: str):
-        """Extract additional session tokens from Instagram page."""
-        try:
-            # Extract various session tokens that might be useful
-            patterns = {
-                'x-ig-app-id': r'"appId":"(\d+)"',
-                'x-ig-www-claim': r'"www-claim":"([^"]+)"',
-                'authorization': r'"authorization":"([^"]+)"'
-            }
-            
-            for header, pattern in patterns.items():
-                match = re.search(pattern, html_content)
-                if match and header not in self.session.headers:
-                    self.session.headers[header] = match.group(1)
-                    logger.debug("Added header: " + header)
-        except Exception as e:
-            logger.debug("Failed to extract session tokens: " + str(e))
 
     def calculate_delta(self, current: int, previous: Optional[int]) -> str:
         """Calculate and format delta."""
@@ -277,7 +164,8 @@ class InstagramCollectorBase:
             "embeds": [embed]
         }
         try:
-            response = requests.post(self.discord_webhook, json=payload, timeout=10)
+            import requests as http_requests
+            response = http_requests.post(self.discord_webhook, json=payload, timeout=10)
             if response.status_code != 204:
                 logger.warning(f"Discord webhook returned status {response.status_code}")
         except Exception as e:
@@ -296,9 +184,9 @@ class InstagramCollectorBase:
             else:
                 logger.warning(f"Failed to fetch data for {username}")
 
-            # Random delay between 45-120 seconds
+            # Random delay between 5-15 seconds (reduced from 45-120)
             if username != self.usernames[-1]:  # No delay after last
-                delay = random.uniform(45, 120)
+                delay = random.uniform(5, 15)
                 logger.info(f"Sleeping for {delay:.2f} seconds")
                 time.sleep(delay)
 

@@ -5,7 +5,10 @@ Tracks Instagram follower counts with weekly comparison reports.
 """
 
 from datetime import datetime, timezone
-from instagram_collector_base import InstagramCollectorBase
+try:
+    from .instagram_collector_base import InstagramCollectorBase
+except ImportError:
+    from instagram_collector_base import InstagramCollectorBase
 import logging
 
 logger = logging.getLogger(__name__)
