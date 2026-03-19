@@ -70,19 +70,21 @@ class InstagramCollectorBase:
                         self.session.cookies.set(name, value)
                 logger.info("Loaded existing session cookies")
             except Exception as e:
-                logger.warning(f"Failed to load session cookies: {e}")
+                logger.warning("Failed to load session cookies: " + str(e))
 
     def _save_session(self):
         """Save session cookies to file."""
         cookie_file = "config/instagram_session.json"
         try:
-            cookies = {cookie.name: cookie.value for cookie in self.session.cookies}
+            cookies = {}
+            for cookie in self.session.cookies:
+                cookies[cookie.name] = cookie.value
             os.makedirs(os.path.dirname(cookie_file), exist_ok=True)
             with open(cookie_file, 'w') as f:
                 json.dump(cookies, f)
             logger.info("Saved session cookies")
         except Exception as e:
-            logger.warning(f"Failed to save session cookies: {e}")
+            logger.warning("Failed to save session cookies: " + str(e))
 
     def _load_config(self) -> list:
         """Load usernames from config file."""
@@ -116,45 +118,54 @@ class InstagramCollectorBase:
 
     def get_follower_count(self, username: str) -> Optional[int]:
         """Get follower count for a username using mobile API."""
-        url = f"https://i.instagram.com/api/v1/users/web_profile_info/?username={username}"
+        url = "https://i.instagram.com/api/v1/users/web_profile_info/?username=" + username
+        max_retries = 3
         
-        try:
-            response = self.session.get(url, timeout=30)
-            logger.info(f"Request to {url} returned status {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                user_data = data.get("data", {}).get("user", {})
-                follower_count = user_data.get("edge_followed_by", {}).get("count")
-                if follower_count is not None:
-                    logger.info(f"Extracted follower count: {follower_count}")
-                    return int(follower_count)
-                else:
-                    logger.warning(f"No follower count found in response for {username}")
-            elif response.status_code == 401:
-                # Try to refresh session or handle authentication
-                logger.warning(f"401 Unauthorized for {username}. Attempting to refresh session...")
-                self._refresh_session()
-                # Retry once after session refresh
+        for attempt in range(max_retries):
+            try:
                 response = self.session.get(url, timeout=30)
+                logger.info("Request to " + url + " returned status " + str(response.status_code))
+                
                 if response.status_code == 200:
                     data = response.json()
                     user_data = data.get("data", {}).get("user", {})
                     follower_count = user_data.get("edge_followed_by", {}).get("count")
                     if follower_count is not None:
-                        logger.info(f"Successfully extracted follower count after session refresh: {follower_count}")
+                        logger.info("Extracted follower count: " + str(follower_count))
                         return int(follower_count)
+                    else:
+                        logger.warning("No follower count found in response for " + username)
+                elif response.status_code == 401:
+                    # Try to refresh session or handle authentication
+                    logger.warning("401 Unauthorized for " + username + ". Attempting to refresh session...")
+                    refresh_success = self._refresh_session()
+                    if refresh_success and attempt < max_retries - 1:
+                        # Wait a bit before retrying
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    # Retry once after session refresh
+                    response = self.session.get(url, timeout=30)
+                    if response.status_code == 200:
+                        data = response.json()
+                        user_data = data.get("data", {}).get("user", {})
+                        follower_count = user_data.get("edge_followed_by", {}).get("count")
+                        if follower_count is not None:
+                            logger.info("Successfully extracted follower count after session refresh: " + str(follower_count))
+                            return int(follower_count)
+                    else:
+                        logger.error("Still getting " + str(response.status_code) + " after session refresh for " + username)
+                elif response.status_code in [403, 429]:
+                    logger.error("Security Block: Received " + str(response.status_code) + " status code. Exiting to prevent further requests.")
+                    sys.exit(1)
                 else:
-                    logger.error(f"Still getting {response.status_code} after session refresh for {username}")
-            elif response.status_code in [403, 429]:
-                logger.error("Security Block: Received " + str(response.status_code) + " status code. Exiting to prevent further requests.")
-                sys.exit(1)
-            else:
-                logger.warning("Unexpected status code " + str(response.status_code) + " for " + username)
-                
-        except Exception as e:
-            logger.error(f"Error fetching data for {username}: {e}")
-            
+                    logger.warning("Unexpected status code " + str(response.status_code) + " for " + username)
+                    
+            except Exception as e:
+                logger.error("Error fetching data for " + username + ": " + str(e))
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                    
         return None
 
     def _refresh_session(self):
@@ -174,10 +185,32 @@ class InstagramCollectorBase:
                 csrf_match = re.search(r'"csrf_token":"([^"]+)"', response.text)
                 if csrf_match:
                     self.session.headers.update({"x-csrftoken": csrf_match.group(1)})
+                # Also try to extract other session tokens
+                self._extract_session_tokens(response.text)
                 logger.info("Session refreshed successfully")
                 self._save_session()
+                return True
         except Exception as e:
-            logger.warning(f"Failed to refresh session: {e}")
+            logger.warning("Failed to refresh session: " + str(e))
+        return False
+
+    def _extract_session_tokens(self, html_content: str):
+        """Extract additional session tokens from Instagram page."""
+        try:
+            # Extract various session tokens that might be useful
+            patterns = {
+                'x-ig-app-id': r'"appId":"(\d+)"',
+                'x-ig-www-claim': r'"www-claim":"([^"]+)"',
+                'authorization': r'"authorization":"([^"]+)"'
+            }
+            
+            for header, pattern in patterns.items():
+                match = re.search(pattern, html_content)
+                if match and header not in self.session.headers:
+                    self.session.headers[header] = match.group(1)
+                    logger.debug("Added header: " + header)
+        except Exception as e:
+            logger.debug("Failed to extract session tokens: " + str(e))
 
     def calculate_delta(self, current: int, previous: Optional[int]) -> str:
         """Calculate and format delta."""
@@ -223,7 +256,7 @@ class InstagramCollectorBase:
                 delta_num = int(delta[1:])
                 delta_text = f"🔴 **{delta_num} less**"
             else:
-                delta_text = f"🟠 no changes"
+                delta_text = "🟠 no changes"
             
             lines.append(f"**{report['username']}** has {report['count']} followers {delta_text} since {period}.")
 
