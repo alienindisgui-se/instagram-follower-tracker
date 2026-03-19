@@ -17,9 +17,9 @@ A sophisticated Python-based system for automated Instagram follower tracking wi
 - **🤖 Automated Execution**: GitHub Actions with scheduled runs and manual triggers
 - **💬 Discord Notifications**: Color-coded embed reports with follower changes
 - **📈 Historical Data**: JSON-based storage with automatic cleanup and retention policies
-- **🔒 Security-First**: Rate limiting, error handling, and immediate exit on security blocks
+- **🔒 Security-First**: Error handling and Cloudflare bypass with cloudscraper
 - **🔄 Fallback Logic**: Intelligent data fallback when previous periods are missing
-- **📱 Mobile API**: Reliable data fetching using Instagram's mobile API endpoints
+- **📱 Instapeep API**: Reliable data fetching using Instapeep.com API endpoints
 
 ## 🏗️ Architecture
 
@@ -153,27 +153,42 @@ The system sends rich embed notifications with:
 
 ### Rate Limiting
 
-- **Request delays**: 45-120 seconds between username requests
-- **Security blocks**: Immediate exit on 403/429 status codes
-- **Session management**: Persistent HTTP session with proper headers
+- **Request delays**: 5-15 seconds between username requests
+- **Error handling**: Automatic retry with exponential backoff
+- **Cloudflare bypass**: Uses cloudscraper for reliable access
 
 ### API Security
 
-- **Mobile API**: Uses Instagram's mobile API endpoints
-- **User-Agent**: Mobile device simulation
-- **App ID**: Proper Instagram app identification
+- **Instapeep API**: Uses Instapeep.com profile API endpoints
+- **Cloudflare bypass**: Automatic Cloudflare detection and bypass
+- **No authentication**: No Instagram login required
 
 ## 📱 API Method
 
-The system uses Instagram's mobile API endpoint:
+The system uses Instapeep.com API endpoint:
 
 ```
-https://i.instagram.com/api/v1/users/web_profile_info/?username={username}
+https://instapeep.com/api/profile/{username}
 ```
 
-With headers:
-- `User-Agent`: Instagram Android app simulation
-- `x-ig-app-id`: Instagram app identifier
+**Response Format:**
+```json
+{
+  "username": "user_12345",
+  "full_name": "John Doe",
+  "follower_count": 1234567,
+  "following_count": 150,
+  "post_count": 42,
+  "is_private": false,
+  "is_verified": false
+}
+```
+
+**Key Features:**
+- No authentication required
+- Automatic Cloudflare bypass via cloudscraper
+- Clean JSON response with follower count
+- More reliable than Instagram's mobile API
 
 ## 🚀 Usage
 
@@ -203,10 +218,11 @@ python scripts/instagram_monthly_collector.py
 - Check Discord server permissions
 - Ensure webhook hasn't been deleted
 
-#### "Security Block: Received 403 or 429"
-- Instagram rate limiting detected
-- System exits automatically to prevent further issues
-- Wait before retrying (typically 1-24 hours)
+#### "Request failed with status 403/404"
+- Instapeep.com API temporarily unavailable
+- Check username spelling in config
+- Verify accounts exist and are public
+- System will retry automatically
 
 #### "No data collected"
 - Check username spelling in config
@@ -235,4 +251,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Note**: This tool is for educational and monitoring purposes only. Ensure compliance with Instagram's Terms of Service when using this system.
+**Note**: This tool uses Instapeep.com API for data collection. Ensure compliance with Instagram's Terms of Service and Instapeep.com usage policies when using this system.
