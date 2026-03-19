@@ -32,6 +32,12 @@ MANIFEST
 *.manifest
 *.spec
 
+# VSCode
+.vscode/
+
+# SonarLint
+.sonarlint/
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
