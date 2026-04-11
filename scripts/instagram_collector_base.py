@@ -132,20 +132,23 @@ class InstagramCollectorBase:
         if not reports:
             return
 
+        # Sort reports by follower count in descending order
+        sorted_reports = sorted(reports, key=lambda x: x['count'], reverse=True)
+
         lines = []
-        for report in reports:
+        for report in sorted_reports:
             delta = report['delta']
             
             if delta.startswith('+'):
                 delta_num = int(delta[1:])
-                delta_text = f"🟢 **{delta_num} more**"
+                delta_text = f"🟢 **{delta_num:,} more**"
             elif delta.startswith('-'):
                 delta_num = int(delta[1:])
-                delta_text = f"🔴 **{delta_num} less**"
+                delta_text = f"🔴 **{delta_num:,} less**"
             else:
                 delta_text = "🟠 no changes"
             
-            lines.append(f"**{report['username']}** has {report['count']} followers {delta_text} since {period}.")
+            lines.append(f"**{report['username']}** has {report['count']:,} followers {delta_text} since {period}.")
 
         # Set different colors based on report type
         color_map = {
