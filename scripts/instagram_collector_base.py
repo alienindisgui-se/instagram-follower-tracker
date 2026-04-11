@@ -141,12 +141,12 @@ class InstagramCollectorBase:
             
             if delta.startswith('+'):
                 delta_num = int(delta[1:])
-                delta_text = f"**{delta_num:,} more**"
+                delta_text = f"🟢 **{delta_num:,} more**"
             elif delta.startswith('-'):
                 delta_num = int(delta[1:])
-                delta_text = f"**{delta_num:,} less**"
+                delta_text = f"🔴 **{delta_num:,} less**"
             else:
-                delta_text = "no changes"
+                delta_text = "🟠 no changes"
             
             lines.append(f"**{report['username']}** has {report['count']:,} followers {delta_text} since {period}.")
 
