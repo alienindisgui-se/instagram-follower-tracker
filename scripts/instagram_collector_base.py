@@ -37,6 +37,10 @@ class InstagramCollectorBase:
 
         # Load config
         self.usernames = self._load_config()
+        
+        # Circuit breaker for API availability
+        self.consecutive_503_errors = 0
+        self.max_consecutive_503 = 3  # Stop after 3 consecutive 503 errors
 
 
     def _load_config(self) -> list:
@@ -74,6 +78,11 @@ class InstagramCollectorBase:
         url = f"https://instapeep.com/api/profile/{username}"
         max_retries = 3
         
+        # Check circuit breaker - stop if too many consecutive 503 errors
+        if self.consecutive_503_errors >= self.max_consecutive_503:
+            logger.error(f"Circuit breaker triggered: Too many consecutive 503 errors. Skipping {username}.")
+            return None
+        
         for attempt in range(max_retries):
             try:
                 response = self.scraper.get(url, timeout=30)
@@ -84,11 +93,25 @@ class InstagramCollectorBase:
                     follower_count = data.get("follower_count")
                     if follower_count is not None:
                         logger.info(f"Extracted follower count: {follower_count}")
+                        self.consecutive_503_errors = 0  # Reset circuit breaker on success
                         return int(follower_count)
                     else:
                         logger.warning(f"No follower count found in response for {username}")
+                elif response.status_code == 503:
+                    # Service Unavailable - use longer delays for 503 errors
+                    self.consecutive_503_errors += 1
+                    logger.warning(f"HTTP 503 Service Unavailable for {username} (attempt {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        # Use longer delays for 503: 30s, 60s, 120s
+                        delay = 30 * (2 ** attempt)
+                        logger.info(f"API unavailable, waiting {delay}s before retry...")
+                        time.sleep(delay)
+                        continue
                 else:
                     logger.warning(f"HTTP {response.status_code} for {username}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # Standard exponential backoff
+                        continue
                     
             except Exception as e:
                 logger.error(f"Error fetching data for {username}: {e}")
@@ -123,6 +146,33 @@ class InstagramCollectorBase:
             return f"{percentage:.1f}%"
         else:
             return "0.0%"
+
+    def send_api_failure_notification(self, report_type: str) -> None:
+        """Send Discord notification when API is completely unavailable."""
+        if not self.discord_webhook:
+            logger.warning("No Discord webhook configured")
+            return
+
+        embed = {
+            "title": f"🚨 Instagram {report_type} Collection Failed",
+            "description": "**Instapeep.com API is currently unavailable (HTTP 503 Service Unavailable)**\n\n"
+                          "All follower data collection attempts failed. The API may be experiencing temporary downtime.\n\n"
+                          "**Next steps:**\n"
+                          "- Check https://instapeep.com status\n"
+                          "- Retry collection manually when API recovers\n"
+                          "- Consider implementing backup API endpoint",
+            "color": 0xFF0000  # Red for error
+        }
+        payload = {
+            "embeds": [embed]
+        }
+        try:
+            import requests as http_requests
+            response = http_requests.post(self.discord_webhook, json=payload, timeout=10)
+            if response.status_code != 204:
+                logger.warning(f"Discord webhook returned status {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error sending Discord API failure notification: {e}")
 
     def send_discord_notification(self, reports: List[Dict], report_type: str, period: str) -> None:
         """Send consolidated report to Discord webhook."""

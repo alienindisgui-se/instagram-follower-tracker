@@ -4,7 +4,7 @@ Instagram Daily Follower Collector
 Tracks Instagram follower counts with daily comparison reports.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 try:
     from .instagram_collector_base import InstagramCollectorBase
 except ImportError:
@@ -27,7 +27,8 @@ class InstagramDailyCollector(InstagramCollectorBase):
         current_data = self.collect_current_data()
         
         if not current_data:
-            logger.error("No data collected. Exiting.")
+            logger.error("No data collected. Sending API failure notification.")
+            self.send_api_failure_notification("Daily")
             return
 
         # Get previous day's data for comparison

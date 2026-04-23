@@ -4,7 +4,7 @@ Instagram Monthly Follower Collector
 Tracks Instagram follower counts with monthly comparison reports.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 try:
     from .instagram_collector_base import InstagramCollectorBase
 except ImportError:
@@ -27,7 +27,8 @@ class InstagramMonthlyCollector(InstagramCollectorBase):
         current_data = self.collect_current_data()
         
         if not current_data:
-            logger.error("No data collected. Exiting.")
+            logger.error("No data collected. Sending API failure notification.")
+            self.send_api_failure_notification("Monthly")
             return
 
         # Get previous month's data for comparison
@@ -63,8 +64,6 @@ class InstagramMonthlyCollector(InstagramCollectorBase):
         self.send_discord_notification(reports, "Monthly", "last month")
 
         # Update history data
-        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        
         # Ensure monthly structure exists
         if "monthly" not in history:
             history["monthly"] = {}
