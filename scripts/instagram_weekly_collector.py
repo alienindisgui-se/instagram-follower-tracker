@@ -27,7 +27,8 @@ class InstagramWeeklyCollector(InstagramCollectorBase):
         current_data = self.collect_current_data()
         
         if not current_data:
-            logger.error("No data collected. Exiting.")
+            logger.error("No data collected. Sending API failure notification.")
+            self.send_api_failure_notification("Weekly")
             return
 
         # Get previous Sunday's data for comparison
