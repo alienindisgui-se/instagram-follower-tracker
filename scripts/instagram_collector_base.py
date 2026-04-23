@@ -221,7 +221,7 @@ class InstagramCollectorBase:
                 footer_lines.append(f"🔴 **{most_decrease[0]['username']}** lost the most: {most_decrease[0]['percentage']}")
             
             if footer_lines:
-                lines.append("\n---\n" + "\n".join(footer_lines))
+                lines.append("\n" + "\n".join(footer_lines))
 
         # Set different colors based on report type
         color_map = {
