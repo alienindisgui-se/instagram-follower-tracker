@@ -200,6 +200,29 @@ class InstagramCollectorBase:
             
             lines.append(f"**{report['username']}** has {report['count']:,} followers {delta_text} since {period}.")
 
+        # Find accounts with most % increase and decrease
+        reports_with_percentage = [r for r in reports if r['percentage'] != 'N/A']
+        if reports_with_percentage:
+            # Parse percentage strings to floats for comparison
+            def parse_percentage(pct_str):
+                return float(pct_str.replace('%', '').replace('+', ''))
+            
+            parsed_reports = [(r, parse_percentage(r['percentage'])) for r in reports_with_percentage]
+            
+            # Find most positive (highest % increase)
+            most_increase = max(parsed_reports, key=lambda x: x[1])
+            # Find most negative (lowest % decrease)
+            most_decrease = min(parsed_reports, key=lambda x: x[1])
+            
+            footer_lines = []
+            if most_increase[1] > 0:
+                footer_lines.append(f"🟢 **{most_increase[0]['username']}** gained the most: {most_increase[0]['percentage']}")
+            if most_decrease[1] < 0:
+                footer_lines.append(f"🔴 **{most_decrease[0]['username']}** lost the most: {most_decrease[0]['percentage']}")
+            
+            if footer_lines:
+                lines.append("\n---\n" + "\n".join(footer_lines))
+
         # Set different colors based on report type
         color_map = {
             "Daily":    0x0099ff,   # Blue
