@@ -76,13 +76,14 @@ class InstagramCollectorBase:
     def get_follower_count(self, username: str) -> Optional[int]:
         """Get follower count for a username using Instapeep.com API."""
         url = f"https://instapeep.com/api/profile/{username}"
+        max_retries = 3
         
-        # Check if we should abort due to persistent 503 errors
-        if self.consecutive_503_errors >= 3:
-            logger.error("Aborting script due to persistent 503 errors after 3 consecutive failures")
-            sys.exit(1)
+        # Check circuit breaker - stop if too many consecutive 503 errors
+        if self.consecutive_503_errors >= self.max_consecutive_503:
+            logger.error(f"Circuit breaker triggered: Too many consecutive 503 errors. Skipping {username}.")
+            return None
         
-        for attempt in range(3):  # Retry up to 3 times
+        for attempt in range(max_retries):
             try:
                 response = self.scraper.get(url, timeout=30)
                 logger.info(f"Request to {url} returned status {response.status_code}")
@@ -92,32 +93,30 @@ class InstagramCollectorBase:
                     follower_count = data.get("follower_count")
                     if follower_count is not None:
                         logger.info(f"Extracted follower count: {follower_count}")
-                        self.consecutive_503_errors = 0  # Reset on success
+                        self.consecutive_503_errors = 0  # Reset circuit breaker on success
                         return int(follower_count)
                     else:
                         logger.warning(f"No follower count found in response for {username}")
-                        return None
                 elif response.status_code == 503:
+                    # Service Unavailable - use longer delays for 503 errors
                     self.consecutive_503_errors += 1
-                    logger.warning(f"HTTP 503 Service Unavailable for {username} (attempt {attempt + 1}/3)")
-                    if attempt < 2:  # Don't retry on the last attempt
-                        delay = 30 * (2 ** attempt)  # 30s, 60s
+                    logger.warning(f"HTTP 503 Service Unavailable for {username} (attempt {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        # Use longer delays for 503: 30s, 60s, 120s
+                        delay = 30 * (2 ** attempt)
                         logger.info(f"API unavailable, waiting {delay}s before retry...")
                         time.sleep(delay)
                         continue
-                    else:
-                        logger.error("All 3 attempts failed with 503, aborting script")
-                        sys.exit(1)
                 else:
                     logger.warning(f"HTTP {response.status_code} for {username}")
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # Standard exponential backoff
                         continue
                     
             except Exception as e:
                 logger.error(f"Error fetching data for {username}: {e}")
-                if attempt < 2:
-                    time.sleep(2 ** attempt)
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
                     continue
                     
         return None
@@ -293,71 +292,3 @@ class InstagramCollectorBase:
         today = datetime.now(timezone.utc)
         previous_day = today - timedelta(days=1)
         return previous_day.strftime('%Y-%m-%d')
-
-    def get_previous_data_with_fallback(self, history: Dict, data_type: str, target_date: str, max_lookback: int = 7) -> Dict[str, int]:
-        """
-        Get previous data with fallback to earlier dates and averaging.
-        
-        Args:
-            history: The history data dict
-            data_type: "daily", "weekly", or "monthly"
-            target_date: The target date string
-            max_lookback: Maximum periods to look back
-            
-        Returns:
-            Dict of username -> averaged follower count
-        """
-        data_section = history.get(data_type, {})
-        
-        # First try the exact target date
-        if target_date in data_section:
-            return data_section[target_date]
-        
-        # If not found, look back further and collect available data
-        available_data = []
-        current_date = datetime.strptime(target_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
-        
-        # Determine the timedelta based on data type
-        if data_type == "daily":
-            delta = timedelta(days=1)
-        elif data_type == "weekly":
-            delta = timedelta(days=7)
-        elif data_type == "monthly":
-            # For monthly, we need to go back by months
-            def get_previous_months(date, months_back):
-                for _ in range(months_back):
-                    if date.month == 1:
-                        date = date.replace(year=date.year - 1, month=12)
-                    else:
-                        date = date.replace(month=date.month - 1)
-                return date
-        else:
-            return {}
-        
-        # Look back up to max_lookback periods
-        for i in range(1, max_lookback + 1):
-            if data_type == "monthly":
-                lookback_date = get_previous_months(current_date, i)
-            else:
-                lookback_date = current_date - (delta * i)
-            
-            date_str = lookback_date.strftime('%Y-%m-%d')
-            if date_str in data_section:
-                available_data.append(data_section[date_str])
-        
-        if not available_data:
-            return {}
-        
-        # Calculate averages for each username
-        averaged_data = {}
-        all_usernames = set()
-        for data_point in available_data:
-            all_usernames.update(data_point.keys())
-        
-        for username in all_usernames:
-            counts = [data_point.get(username) for data_point in available_data if username in data_point]
-            if counts:
-                averaged_data[username] = int(sum(counts) / len(counts))
-        
-        logger.info(f"Using averaged data from {len(available_data)} {data_type} periods for {target_date}")
-        return averaged_data

@@ -33,7 +33,7 @@ class InstagramDailyCollector(InstagramCollectorBase):
 
         # Get previous day's data for comparison
         previous_day = self.get_previous_day()
-        previous_data = self.get_previous_data_with_fallback(history, "daily", previous_day, max_lookback=7)
+        previous_data = history.get("daily", {}).get(previous_day, {})
         
         reports = []
         
