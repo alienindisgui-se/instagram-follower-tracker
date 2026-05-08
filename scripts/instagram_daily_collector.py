@@ -30,10 +30,17 @@ class InstagramDailyCollector(InstagramCollectorBase):
             logger.error("No data collected. Sending API failure notification.")
             self.send_api_failure_notification("Daily")
             return
+        
+        # Require all usernames -- partial data is not accepted
+        if len(current_data) < len(self.usernames):
+            missing = len(self.usernames) - len(current_data)
+            logger.error(f"Only {len(current_data)}/{len(self.usernames)} usernames fetched ({missing} failed). Aborting.")
+            self.send_api_failure_notification("Daily")
+            return
 
         # Get previous day's data for comparison
         previous_day = self.get_previous_day()
-        previous_data = history.get("daily", {}).get(previous_day, {})
+        previous_data = self.get_previous_data_with_fallback(history, "daily", previous_day, max_lookback=7)
         
         reports = []
         

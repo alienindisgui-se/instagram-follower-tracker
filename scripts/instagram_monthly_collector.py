@@ -30,14 +30,21 @@ class InstagramMonthlyCollector(InstagramCollectorBase):
             logger.error("No data collected. Sending API failure notification.")
             self.send_api_failure_notification("Monthly")
             return
+        
+        # Require all usernames -- partial data is not accepted
+        if len(current_data) < len(self.usernames):
+            missing = len(self.usernames) - len(current_data)
+            logger.error(f"Only {len(current_data)}/{len(self.usernames)} usernames fetched ({missing} failed). Aborting.")
+            self.send_api_failure_notification("Monthly")
+            return
 
         # Get previous month's data for comparison
         previous_month_date = self.get_previous_month_first_day()
-        previous_month_data = history.get("monthly", {}).get(previous_month_date, {})
+        previous_month_data = self.get_previous_data_with_fallback(history, "monthly", previous_month_date, max_lookback=3)
         
-        # Fallback to daily data if monthly data doesn't exist
+        # Fallback to daily data if no monthly data found
         if not previous_month_data:
-            previous_month_data = history.get("daily", {}).get(previous_month_date, {})
+            previous_month_data = self.get_previous_data_with_fallback(history, "daily", previous_month_date, max_lookback=7)
             if previous_month_data:
                 logger.info(f"Using daily data for {previous_month_date} as monthly data fallback")
         
