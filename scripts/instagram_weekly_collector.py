@@ -33,11 +33,11 @@ class InstagramWeeklyCollector(InstagramCollectorBase):
 
         # Get previous Sunday's data for comparison
         previous_sunday = self.get_previous_sunday()
-        previous_weekly_data = history.get("weekly", {}).get(previous_sunday, {})
+        previous_weekly_data = self.get_previous_data_with_fallback(history, "weekly", previous_sunday, max_lookback=4)
         
-        # Fallback to daily data if weekly data doesn't exist
+        # Fallback to daily data if no weekly data found
         if not previous_weekly_data:
-            previous_weekly_data = history.get("daily", {}).get(previous_sunday, {})
+            previous_weekly_data = self.get_previous_data_with_fallback(history, "daily", previous_sunday, max_lookback=7)
             if previous_weekly_data:
                 logger.info(f"Using daily data for {previous_sunday} as weekly data fallback")
         
