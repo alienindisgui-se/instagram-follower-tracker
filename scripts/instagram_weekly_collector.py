@@ -27,9 +27,18 @@ class InstagramWeeklyCollector(InstagramCollectorBase):
         current_data = self.collect_current_data()
         
         if not current_data:
-            logger.error("No data collected. Sending API failure notification.")
+            logger.error("No data collected at all. Sending API failure notification.")
             self.send_api_failure_notification("Weekly")
             return
+        
+        # Check if we got data for at least some usernames
+        successful_usernames = len(current_data)
+        total_usernames = len(self.usernames)
+        
+        if successful_usernames < total_usernames:
+            logger.warning(f"Partial data collected: {successful_usernames}/{total_usernames} usernames succeeded")
+            # Send partial success notification instead of failure
+            self.send_partial_success_notification("Weekly", successful_usernames, total_usernames)
 
         # Get previous Sunday's data for comparison
         previous_sunday = self.get_previous_sunday()
