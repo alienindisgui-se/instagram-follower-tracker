@@ -77,7 +77,12 @@ class InstagramCollectorBase:
         """Get follower count for a username using Instapeep.com API."""
         url = f"https://instapeep.com/api/profile/{username}"
         
-        for attempt in range(3):  # Retry up to 3 times per username
+        # Check if we should abort due to persistent 503 errors
+        if self.consecutive_503_errors >= 3:
+            logger.error("Aborting script due to persistent 503 errors after 3 consecutive failures")
+            sys.exit(1)
+        
+        for attempt in range(3):  # Retry up to 3 times
             try:
                 response = self.scraper.get(url, timeout=30)
                 logger.info(f"Request to {url} returned status {response.status_code}")
@@ -87,11 +92,13 @@ class InstagramCollectorBase:
                     follower_count = data.get("follower_count")
                     if follower_count is not None:
                         logger.info(f"Extracted follower count: {follower_count}")
+                        self.consecutive_503_errors = 0  # Reset on success
                         return int(follower_count)
                     else:
                         logger.warning(f"No follower count found in response for {username}")
                         return None
                 elif response.status_code == 503:
+                    self.consecutive_503_errors += 1
                     logger.warning(f"HTTP 503 Service Unavailable for {username} (attempt {attempt + 1}/3)")
                     if attempt < 2:  # Don't retry on the last attempt
                         delay = 30 * (2 ** attempt)  # 30s, 60s
@@ -99,8 +106,8 @@ class InstagramCollectorBase:
                         time.sleep(delay)
                         continue
                     else:
-                        logger.warning("All 3 attempts failed with 503, skipping this username")
-                        return None
+                        logger.error("All 3 attempts failed with 503, aborting script")
+                        sys.exit(1)
                 else:
                     logger.warning(f"HTTP {response.status_code} for {username}")
                     if attempt < 2:
@@ -119,7 +126,7 @@ class InstagramCollectorBase:
     def calculate_delta(self, current: int, previous: Optional[int]) -> str:
         """Calculate and format delta."""
         if previous is None:
-            return "📊"  # New data point icon
+            return "~"  # No previous data
         diff = current - previous
         if diff > 0:
             return f"+{diff}"
@@ -131,7 +138,7 @@ class InstagramCollectorBase:
     def calculate_percentage_change(self, current: int, previous: Optional[int]) -> str:
         """Calculate and format percentage change."""
         if previous is None or previous == 0:
-            return "New data"
+            return "N/A"
         diff = current - previous
         percentage = (diff / previous) * 100
         if percentage > 0:
@@ -141,32 +148,8 @@ class InstagramCollectorBase:
         else:
             return "0.0%"
 
-    def send_partial_success_notification(self, report_type: str, successful: int, total: int) -> None:
-        """Send Discord notification when only partial data was collected."""
-        if not self.discord_webhook:
-            logger.warning("No Discord webhook configured")
-            return
-
-        embed = {
-            "title": f"⚠️ Instagram {report_type} Collection Partial Success",
-            "description": f"**Partial data collected: {successful}/{total} accounts succeeded**\n\n"
-                          "Some follower data collection failed (likely API issues). Partial data has been stored.\n\n"
-                          "**Next steps:**\n"
-                          "- Check https://instapeep.com status\n"
-                          "- Missing accounts will be retried in the next collection\n"
-                          "- Data comparison will use available historical data",
-            "color": 0xFFA500  # Orange for warning
-        }
-        payload = {
-            "embeds": [embed]
-        }
-        try:
-            import requests as http_requests
-            response = http_requests.post(self.discord_webhook, json=payload, timeout=10)
-            if response.status_code != 204:
-                logger.warning(f"Discord webhook returned status {response.status_code}")
-        except Exception as e:
-            logger.error(f"Error sending Discord partial success notification: {e}")
+    def send_api_failure_notification(self, report_type: str) -> None:
+        """Send Discord notification when API is completely unavailable."""
         if not self.discord_webhook:
             logger.warning("No Discord webhook configured")
             return
@@ -206,23 +189,20 @@ class InstagramCollectorBase:
         lines = []
         for report in sorted_reports:
             delta = report['delta']
-            percentage = report['percentage']
             
-            if delta == "📊":
-                delta_text = "📊 **new data point**"
-            elif delta.startswith('+'):
+            if delta.startswith('+'):
                 delta_num = int(delta[1:])
-                delta_text = f"🟢 **{delta_num:,} more** ({percentage})"
+                delta_text = f"🟢 **{delta_num:,} more**"
             elif delta.startswith('-'):
                 delta_num = int(delta[1:])
-                delta_text = f"🔴 **{delta_num:,} less** ({percentage})"
+                delta_text = f"🔴 **{delta_num:,} less**"
             else:
-                delta_text = f"🟠 no changes ({percentage})"
+                delta_text = "🟠 no changes"
             
             lines.append(f"**{report['username']}** has {report['count']:,} followers {delta_text} since {period}.")
 
         # Find accounts with most % increase and decrease
-        reports_with_percentage = [r for r in reports if r['percentage'] not in ['N/A', 'New data']]
+        reports_with_percentage = [r for r in reports if r['percentage'] != 'N/A']
         if reports_with_percentage:
             # Parse percentage strings to floats for comparison
             def parse_percentage(pct_str):
