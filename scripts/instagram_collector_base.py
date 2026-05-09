@@ -16,6 +16,10 @@ from datetime import datetime, timezone, timedelta
 import cloudscraper
 from dotenv import load_dotenv
 
+class ApiUnavailableError(Exception):
+    """Exception raised when the API is completely unavailable."""
+    pass
+
 # Load environment variables
 load_dotenv()
 
@@ -95,8 +99,8 @@ class InstagramCollectorBase:
                         time.sleep(delay)
                         continue
                     else:
-                        logger.warning("All 3 attempts failed with 503, skipping this username")
-                        return None
+                        logger.warning("All 3 attempts failed with 503, aborting collection")
+                        raise ApiUnavailableError(f"API unavailable (503) for {username}")
                 else:
                     logger.warning(f"HTTP {response.status_code} for {username}")
                     if attempt < 2:
@@ -243,12 +247,17 @@ class InstagramCollectorBase:
         
         for username in self.usernames:
             logger.info(f"Fetching data for {username}")
-            count = self.get_follower_count(username)
-            if count is not None:
-                current_data[username] = count
-                logger.info(f"{username}: {count}")
-            else:
-                logger.warning(f"Failed to fetch data for {username}")
+            try:
+                count = self.get_follower_count(username)
+                if count is not None:
+                    current_data[username] = count
+                    logger.info(f"{username}: {count}")
+                else:
+                    logger.warning(f"Failed to fetch data for {username}")
+            except ApiUnavailableError as e:
+                logger.error(str(e))
+                logger.error("Stopping data collection for remaining usernames.")
+                break
 
             # Random delay between 5-15 seconds (reduced from 45-120)
             if username != self.usernames[-1]:  # No delay after last
