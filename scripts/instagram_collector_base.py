@@ -86,7 +86,6 @@ class InstagramCollectorBase:
                     data = response.json()
                     follower_count = data.get("follower_count")
                     if follower_count is not None:
-                        logger.info(f"Extracted follower count: {follower_count}")
                         return int(follower_count)
                     else:
                         logger.warning(f"No follower count found in response for {username}")
