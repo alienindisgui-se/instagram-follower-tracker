@@ -16,6 +16,10 @@ from datetime import datetime, timezone, timedelta
 import cloudscraper
 from dotenv import load_dotenv
 
+class ApiUnavailableError(Exception):
+    """Exception raised when the API is completely unavailable."""
+    pass
+
 # Load environment variables
 load_dotenv()
 
@@ -82,7 +86,6 @@ class InstagramCollectorBase:
                     data = response.json()
                     follower_count = data.get("follower_count")
                     if follower_count is not None:
-                        logger.info(f"Extracted follower count: {follower_count}")
                         return int(follower_count)
                     else:
                         logger.warning(f"No follower count found in response for {username}")
@@ -95,8 +98,8 @@ class InstagramCollectorBase:
                         time.sleep(delay)
                         continue
                     else:
-                        logger.warning("All 3 attempts failed with 503, skipping this username")
-                        return None
+                        logger.warning("All 3 attempts failed with 503, aborting collection")
+                        raise ApiUnavailableError(f"API unavailable (503) for {username}")
                 else:
                     logger.warning(f"HTTP {response.status_code} for {username}")
                     if attempt < 2:
@@ -191,26 +194,25 @@ class InstagramCollectorBase:
             lines.append(f"**{report['username']}** has {report['count']:,} followers {delta_text} since {period}.")
 
         # Find accounts with most % increase and decrease
-        reports_with_percentage = [r for r in reports if r['percentage'] != 'N/A']
-        if reports_with_percentage:
-            # Parse percentage strings to floats for comparison
-            def parse_percentage(pct_str):
-                return float(pct_str.replace('%', '').replace('+', ''))
-            
-            parsed_reports = [(r, parse_percentage(r['percentage'])) for r in reports_with_percentage]
-            
-            # Find most positive (highest % increase)
-            most_increase = max(parsed_reports, key=lambda x: x[1])
-            # Find most negative (lowest % decrease)
-            most_decrease = min(parsed_reports, key=lambda x: x[1])
-            
-            footer_lines = []
-            if most_increase[1] > 0:
-                footer_lines.append(f"🟢 **{most_increase[0]['username']}** gained the most: {most_increase[0]['percentage']}")
-            if most_decrease[1] < 0:
-                footer_lines.append(f"🔴 **{most_decrease[0]['username']}** lost the most: {most_decrease[0]['percentage']}")
-            
-            if footer_lines:
+        if report_type in ("Weekly", "Monthly"):
+            reports_with_percentage = [r for r in reports if r['percentage'] != 'N/A']
+            if reports_with_percentage:
+                # Parse percentage strings to floats for comparison
+                def parse_percentage(pct_str):
+                    return float(pct_str.replace('%', '').replace('+', ''))
+                
+                parsed_reports = [(r, parse_percentage(r['percentage'])) for r in reports_with_percentage]
+                
+                # Find most positive (highest % increase)
+                most_increase = max(parsed_reports, key=lambda x: x[1])
+                # Find most negative (lowest % decrease)
+                most_decrease = min(parsed_reports, key=lambda x: x[1])
+                
+                footer_lines = [
+                    f"🟢 **{most_increase[0]['username']}** gained the most: {most_increase[0]['percentage']}",
+                    f"🔴 **{most_decrease[0]['username']}** lost the most: {most_decrease[0]['percentage']}"
+                ]
+                
                 lines.append("\n" + "\n".join(footer_lines))
 
         # Set different colors based on report type
@@ -243,12 +245,17 @@ class InstagramCollectorBase:
         
         for username in self.usernames:
             logger.info(f"Fetching data for {username}")
-            count = self.get_follower_count(username)
-            if count is not None:
-                current_data[username] = count
-                logger.info(f"{username}: {count}")
-            else:
-                logger.warning(f"Failed to fetch data for {username}")
+            try:
+                count = self.get_follower_count(username)
+                if count is not None:
+                    current_data[username] = count
+                    logger.info(f"{username}: {count}")
+                else:
+                    logger.warning(f"Failed to fetch data for {username}")
+            except ApiUnavailableError as e:
+                logger.error(str(e))
+                logger.error("Stopping data collection for remaining usernames.")
+                break
 
             # Random delay between 5-15 seconds (reduced from 45-120)
             if username != self.usernames[-1]:  # No delay after last

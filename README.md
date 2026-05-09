@@ -20,6 +20,7 @@ A sophisticated Python-based system for automated Instagram follower tracking wi
 - **🔒 Security-First**: Error handling and Cloudflare bypass with cloudscraper
 - **🔄 Fallback Logic**: Intelligent data fallback when previous periods are missing
 - **📱 Instapeep API**: Reliable data fetching using Instapeep.com API endpoints
+- **📢 Release Notes**: Automated Discord notifications for new GitHub releases
 
 ## 🏗️ Architecture
 
@@ -114,6 +115,7 @@ The system stores follower data in `data/instagram_follower_history.json`:
 | Daily Tracker | `0 6 * * *` | Runs daily at 06:00 UTC |
 | Weekly Tracker | `30 6 * * 0` | Runs Sundays at 06:30 UTC |
 | Monthly Tracker | `0 7 1 * *` | Runs 1st of month at 07:00 UTC |
+| Release Notes | On Release | Sends Discord notification on new release |
 
 ### Required GitHub Secrets
 
@@ -139,6 +141,7 @@ The system sends rich embed notifications with:
   - 🟢 Gains: "+X more"
   - 🔴 Losses: "-X less"  
   - 🟠 No change: "no changes"
+- **Top Movers**: For Weekly and Monthly reports, displays the accounts that gained and lost the most by percentage.
 
 ### Example Notification
 
@@ -147,6 +150,9 @@ The system sends rich embed notifications with:
 
 **username1** has 1,257,547 followers 🟢 **47 more** since last week.
 **username2** has 99,727 followers 🔴 **15 less** since last week.
+
+🟢 **username1** gained the most: +3.9%
+🔴 **username2** lost the most: -1.2%
 ```
 
 ## 🔒 Security Considerations
@@ -155,6 +161,7 @@ The system sends rich embed notifications with:
 
 - **Request delays**: 5-15 seconds between username requests
 - **Error handling**: Automatic retry with exponential backoff
+- **Fail-safe**: Aborts collection completely if API returns 3 consecutive 503 Service Unavailable errors, preventing partial data updates
 - **Cloudflare bypass**: Uses cloudscraper for reliable access
 
 ### API Security
