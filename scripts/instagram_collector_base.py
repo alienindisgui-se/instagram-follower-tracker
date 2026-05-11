@@ -36,8 +36,10 @@ class InstagramCollectorBase:
         self.data_file = data_file
         self.discord_webhook = discord_webhook or os.getenv("IG_TRACKER_DISCORD_WEBHOOK")
         
-        # Use cloudscraper for Cloudflare bypass
-        self.scraper = cloudscraper.create_scraper()
+        # Use cloudscraper with built-in Cloudflare bypass (no proxy needed)
+        self.scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+        )
 
         # Load config
         self.usernames = self._load_config()
@@ -91,21 +93,17 @@ class InstagramCollectorBase:
                         logger.warning(f"No follower count found in response for {username}")
                         return None
                 elif response.status_code == 503:
-                    logger.warning(f"HTTP 503 Service Unavailable for {username} (attempt {attempt + 1}/3)")
-                    if attempt < 2:  # Don't retry on the last attempt
-                        delay = 30 * (2 ** attempt)  # 30s, 60s
-                        logger.info(f"API unavailable, waiting {delay}s before retry...")
-                        time.sleep(delay)
-                        continue
-                    else:
-                        logger.warning("All 3 attempts failed with 503, aborting collection")
-                        raise ApiUnavailableError(f"API unavailable (503) for {username}")
+                    logger.warning(f"HTTP 503 Service Unavailable for {username}")
+                    logger.warning("Failed with 503, aborting collection immediately")
+                    raise ApiUnavailableError(f"API unavailable (503) for {username}")
                 else:
                     logger.warning(f"HTTP {response.status_code} for {username}")
                     if attempt < 2:
                         time.sleep(2 ** attempt)
                         continue
                     
+            except ApiUnavailableError:
+                raise
             except Exception as e:
                 logger.error(f"Error fetching data for {username}: {e}")
                 if attempt < 2:
