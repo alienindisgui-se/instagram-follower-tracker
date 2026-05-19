@@ -44,9 +44,12 @@ class InstagramCollectorBase:
         # Load config
         self.usernames = self._load_config()
 
-        # Run-scoped circuit breaker: if Instapeep returns HTTP 503 once,
-        # disable Instapeep for the remainder of this run.
+        # Run-scoped circuit breakers / state.
+        # - Instapeep: if we see HTTP 503 at least once during the run, disable Instapeep for the remainder.
+        # - Inflact: if it fails at least once (non-200 or exception), disable it for the remainder and use instaradar as 3rd fallback.
         self.instapeep_disabled = False
+        self.inflact_failed = False
+
 
 
 
@@ -103,9 +106,21 @@ class InstagramCollectorBase:
         else:
             instapeep_attempts = 3
 
+        # Third fallback (InstaRadar) is only enabled after we have seen Inflact fail once during this run.
+        # For testing, you can set FORCE_INSTARADAR=1 to bypass Instapeep+Inflact and directly call InstaRadar.
+        force_instaradar = os.getenv("FORCE_INSTARADAR", "0").strip() == "1"
+        instaradar_base = "https://www.instaradar.app/api/user"
+
         for attempt in range(instapeep_attempts if instapeep_attempts else 1):
             try:
-                if not self.instapeep_disabled:
+                # -----------------------
+                # 1) Instapeep (primary)
+                # -----------------------
+                if force_instaradar:
+                    logger.warning(
+                        f"FORCE_INSTARADAR=1 enabled; skipping Instapeep and Inflact for {username}"
+                    )
+                elif not self.instapeep_disabled:
                     response = self.scraper.get(url, timeout=30)
                     logger.info(
                         f"Request to {url} returned status {response.status_code}"
@@ -116,69 +131,113 @@ class InstagramCollectorBase:
                         follower_count = data.get("follower_count")
                         if follower_count is not None:
                             return int(follower_count)
-                        else:
-                            logger.warning(
-                                f"No follower count found in response for {username}"
-                            )
-                            return None
-
-                    if response.status_code == 503:
                         logger.warning(
-                            f"HTTP 503 Service Unavailable for {username} (Instapeep). "
-                            "Disabling Instapeep for remainder of run."
-                        )
-                        self.instapeep_disabled = True
-
-                # Fallback: Inflact profile analyzer.
-                try:
-                    inflact_response = self.scraper.post(
-                        inflact_url,
-                        data=inflact_payload,
-                        timeout=30,
-                    )
-                    logger.info(
-                        f"Fallback request to {inflact_url} returned status {inflact_response.status_code}"
-                    )
-
-                    if inflact_response.status_code == 200:
-                        inflact_data = inflact_response.json() or {}
-                        profile = (inflact_data.get("data") or {}).get("profile") or {}
-
-                        # API response may contain follower count under different keys.
-                        follower_count = (
-                            profile.get("engagement", {}) or {}
-                        ).get("followers")
-                        if follower_count is None:
-                            follower_count = profile.get("followers")
-
-                        if follower_count is not None:
-                            return int(follower_count)
-
-                        logger.warning(
-                            f"Inflact fallback returned 200 but no follower count for {username}"
+                            f"No follower count found in response for {username}"
                         )
                         return None
 
-                    logger.warning(
-                        f"Inflact fallback HTTP {inflact_response.status_code} for {username}"
-                    )
-                except Exception as e:
-                    logger.error(f"Inflact fallback failed for {username}: {e}")
+                    # Never retry on 503: move to next fallback option.
+                    if response.status_code == 503:
+                        logger.warning(
+                            f"HTTP 503 Service Unavailable for {username} (Instapeep). Disabling Instapeep for remainder of run."
+                        )
+                        self.instapeep_disabled = True
+                        # Move to next fallback without retrying Instapeep.
 
-                # If Instapeep gave a 503 we disable it and retry loop would call Inflact again.
-                # If Inflact fails, treat as API unavailable after this attempt.
+                # ---------------------------------
+                # 2) Inflact fallback (secondary)
+                # ---------------------------------
+                inflact_response = None
+                if force_instaradar:
+                    # Bypass Inflact entirely for testing.
+                    inflact_response = None
+                else:
+                    try:
+                        inflact_response = self.scraper.post(
+                            inflact_url,
+                            data=inflact_payload,
+                            timeout=30,
+                        )
+                        logger.info(
+                            f"Fallback request to {inflact_url} returned status {inflact_response.status_code}"
+                        )
+
+                        if inflact_response.status_code == 200:
+                            inflact_data = inflact_response.json() or {}
+                            profile = (inflact_data.get("data") or {}).get("profile") or {}
+
+                            follower_count = (
+                                profile.get("engagement", {}) or {}
+                            ).get("followers")
+                            if follower_count is None:
+                                follower_count = profile.get("followers")
+
+                            if follower_count is not None:
+                                return int(follower_count)
+
+                            logger.warning(
+                                f"Inflact fallback returned 200 but no follower count for {username}"
+                            )
+                            return None
+
+                        # Never retry on Inflact failure: move to next fallback option.
+                        logger.warning(
+                            f"Inflact fallback HTTP {inflact_response.status_code} for {username}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Inflact fallback failed for {username}: {e}")
+
+                # Mark Inflact as failed for the remainder of the run.
+                # (Requirement: after Instapeep and Inflact have failed once, use 3rd fallback.)
+                if force_instaradar:
+                    self.inflact_failed = True
+                elif inflact_response is None or inflact_response.status_code != 200:
+                    self.inflact_failed = True
+
+                # ---------------------------
+                # 3) InstaRadar (3rd fallback)
+                # ---------------------------
+                if self.instapeep_disabled and self.inflact_failed or force_instaradar:
+                    instaradar_url = f"{instaradar_base}/{username}"
+                    try:
+                        radar_response = self.scraper.get(instaradar_url, timeout=30)
+                        logger.info(
+                            f"3rd fallback request to {instaradar_url} returned status {radar_response.status_code}"
+                        )
+
+                        if radar_response.status_code == 200:
+                            radar_data = radar_response.json() or {}
+                            profile = (radar_data.get("data") or {})
+                            follower_count = profile.get("follower_count")
+                            if follower_count is not None:
+                                return int(follower_count)
+                            logger.warning(
+                                f"InstaRadar returned 200 but no follower count for {username}"
+                            )
+                            return None
+
+                        logger.warning(
+                            f"InstaRadar fallback HTTP {radar_response.status_code} for {username}"
+                        )
+                    except Exception as e:
+                        logger.error(f"InstaRadar fallback failed for {username}: {e}")
+
+                # If we reach here, all enabled providers failed.
                 raise ApiUnavailableError(f"API unavailable for {username}")
+
 
             except ApiUnavailableError:
                 # Abort for remaining usernames (daily/weekly/monthly runners enforce this).
                 raise
             except Exception as e:
+                # Non-provider exceptions: retry a couple of times with backoff.
                 logger.error(f"Error fetching data for {username}: {e}")
                 if attempt < 2:
                     time.sleep(2 ** attempt)
                     continue
 
         return None
+
 
 
 
