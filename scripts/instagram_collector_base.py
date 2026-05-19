@@ -35,7 +35,7 @@ class InstagramCollectorBase:
         self.config_file = config_file
         self.data_file = data_file
         self.discord_webhook = discord_webhook or os.getenv("IG_TRACKER_DISCORD_WEBHOOK")
-        
+
         # Use cloudscraper with built-in Cloudflare bypass (no proxy needed)
         self.scraper = cloudscraper.create_scraper(
             browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
@@ -43,6 +43,11 @@ class InstagramCollectorBase:
 
         # Load config
         self.usernames = self._load_config()
+
+        # Run-scoped circuit breaker: if Instapeep returns HTTP 503 once,
+        # disable Instapeep for the remainder of this run.
+        self.instapeep_disabled = False
+
 
 
     def _load_config(self) -> list:
@@ -76,41 +81,105 @@ class InstagramCollectorBase:
             json.dump(data, f, indent=2)
 
     def get_follower_count(self, username: str) -> Optional[int]:
-        """Get follower count for a username using Instapeep.com API."""
+        """Get follower count for a username using Instapeep.com API.
+
+        If Instapeep returns HTTP 503 at least once during the run, disable Instapeep
+        for the remainder of the run and fall back to Inflact.
+        """
+
+        # Primary: Instapeep
         url = f"https://instapeep.com/api/profile/{username}"
-        
-        for attempt in range(3):  # Retry up to 3 times per username
+
+        # Fallback endpoint (Inflact)
+        inflact_url = "https://inflact.com/profile-analyzer/v1/analytics/?lang=en"
+        inflact_payload = {"url": username}
+
+        # If we've already seen Instapeep 503 for this run, skip Instapeep entirely.
+        if self.instapeep_disabled:
+            logger.warning(
+                f"Instapeep disabled for this run; using Inflact for {username}"
+            )
+            instapeep_attempts = 0
+        else:
+            instapeep_attempts = 3
+
+        for attempt in range(instapeep_attempts if instapeep_attempts else 1):
             try:
-                response = self.scraper.get(url, timeout=30)
-                logger.info(f"Request to {url} returned status {response.status_code}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    follower_count = data.get("follower_count")
-                    if follower_count is not None:
-                        return int(follower_count)
-                    else:
-                        logger.warning(f"No follower count found in response for {username}")
+                if not self.instapeep_disabled:
+                    response = self.scraper.get(url, timeout=30)
+                    logger.info(
+                        f"Request to {url} returned status {response.status_code}"
+                    )
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        follower_count = data.get("follower_count")
+                        if follower_count is not None:
+                            return int(follower_count)
+                        else:
+                            logger.warning(
+                                f"No follower count found in response for {username}"
+                            )
+                            return None
+
+                    if response.status_code == 503:
+                        logger.warning(
+                            f"HTTP 503 Service Unavailable for {username} (Instapeep). "
+                            "Disabling Instapeep for remainder of run."
+                        )
+                        self.instapeep_disabled = True
+
+                # Fallback: Inflact profile analyzer.
+                try:
+                    inflact_response = self.scraper.post(
+                        inflact_url,
+                        data=inflact_payload,
+                        timeout=30,
+                    )
+                    logger.info(
+                        f"Fallback request to {inflact_url} returned status {inflact_response.status_code}"
+                    )
+
+                    if inflact_response.status_code == 200:
+                        inflact_data = inflact_response.json() or {}
+                        profile = (inflact_data.get("data") or {}).get("profile") or {}
+
+                        # API response may contain follower count under different keys.
+                        follower_count = (
+                            profile.get("engagement", {}) or {}
+                        ).get("followers")
+                        if follower_count is None:
+                            follower_count = profile.get("followers")
+
+                        if follower_count is not None:
+                            return int(follower_count)
+
+                        logger.warning(
+                            f"Inflact fallback returned 200 but no follower count for {username}"
+                        )
                         return None
-                elif response.status_code == 503:
-                    logger.warning(f"HTTP 503 Service Unavailable for {username}")
-                    logger.warning("Failed with 503, aborting collection immediately")
-                    raise ApiUnavailableError(f"API unavailable (503) for {username}")
-                else:
-                    logger.warning(f"HTTP {response.status_code} for {username}")
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
-                        continue
-                    
+
+                    logger.warning(
+                        f"Inflact fallback HTTP {inflact_response.status_code} for {username}"
+                    )
+                except Exception as e:
+                    logger.error(f"Inflact fallback failed for {username}: {e}")
+
+                # If Instapeep gave a 503 we disable it and retry loop would call Inflact again.
+                # If Inflact fails, treat as API unavailable after this attempt.
+                raise ApiUnavailableError(f"API unavailable for {username}")
+
             except ApiUnavailableError:
+                # Abort for remaining usernames (daily/weekly/monthly runners enforce this).
                 raise
             except Exception as e:
                 logger.error(f"Error fetching data for {username}: {e}")
                 if attempt < 2:
                     time.sleep(2 ** attempt)
                     continue
-                    
+
         return None
+
 
 
     def calculate_delta(self, current: int, previous: Optional[int]) -> str:
