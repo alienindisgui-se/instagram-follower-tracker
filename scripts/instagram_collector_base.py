@@ -167,14 +167,17 @@ class InstagramCollectorBase:
                 except Exception as e:
                     logger.error(f"Inflact fallback failed for {username}: {e}")
 
-                # Mark Inflact as failed for the remainder of the run.
+                    # Mark Inflact as failed for the remainder of the run.
                 # This includes exceptions (inflact_response stays None).
-                if inflact_response is None or inflact_response.status_code != 200:
+                inflact_failed_this_call = inflact_response is None or inflact_response.status_code != 200
+                if inflact_failed_this_call:
                     self.inflact_failed = True
 
                 # -----------------------
                 # 3) InstaRadar (3rd)
                 # -----------------------
+                # InstaRadar must run whenever Inflact fails (including timeouts/exceptions).
+                # Do NOT gate this on whether Instapeep was disabled; Instapeep may only be rate-limited.
                 if self.inflact_failed:
                     instaradar_url = f"{instaradar_base}/{username}"
                     try:
