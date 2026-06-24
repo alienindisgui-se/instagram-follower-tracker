@@ -216,15 +216,11 @@ class InstagramCollectorBase:
 
     def _request_with_429_retry(self, method, url, **kwargs):
         max_retries = 3
-        base_delay = 3
-        max_delay = 30
+        delay = 10
         for attempt in range(max_retries):
             response = method(url, **kwargs)
             if response.status_code != 429:
                 return response
-            retry_after = self._get_retry_after(response)
-            delay = retry_after if retry_after else base_delay * (2 ** attempt)
-            delay = min(delay, max_delay)
             logger.warning(
                 f"HTTP 429 for {url}. Waiting {delay:.0f}s before retry ({attempt + 1}/{max_retries})"
             )
