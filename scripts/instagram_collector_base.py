@@ -54,7 +54,10 @@ class InstagramCollectorBase:
 
         # Run-scoped circuit breakers / state.
         # - Instapeep: if we see HTTP 503 at least once during the run, disable Instapeep for the remainder.
+        # - current_tier: last successful API tier (0=Instapeep, 1=Inflact, 2=InstaRadar).
+        #   Next user starts from this tier to avoid re-hitting a congested primary.
         self.instapeep_disabled = False
+        self.current_tier = 0
 
     def _load_config(self) -> list:
         """Load usernames from config file."""
@@ -89,12 +92,15 @@ class InstagramCollectorBase:
     def get_follower_count(self, username: str) -> Optional[int]:
         """Get follower count for a username.
 
-        Order per lap:
-          1) Instapeep
-          2) Inflact
-          3) InstaRadar
+        Tiers:
+          0) Instapeep (primary)
+          1) Inflact (secondary)
+          2) InstaRadar (3rd)
 
-        Run up to 3 laps. If Instapeep returns HTTP 503, disable it for the remainder.
+        Each new user starts from the last successful tier to avoid
+        re-hitting a congested primary. Tiers progress forward only;
+        once Inflact is active we skip Instapeep until it succeeds again.
+        If Instapeep returns HTTP 503 it is disabled for the remainder.
         """
 
         url = f"https://instapeep.com/api/profile/{username}"
@@ -104,13 +110,15 @@ class InstagramCollectorBase:
 
         instaradar_base = "https://www.instaradar.app/api/user"
 
-        max_laps = 3
+        max_tiers = 3
 
-        for lap in range(max_laps):
-            # -----------------------
-            # 1) Instapeep (primary)
-            # -----------------------
-            if not self.instapeep_disabled:
+        for tier_offset in range(max_tiers - self.current_tier):
+            tier_idx = self.current_tier + tier_offset
+
+            if tier_idx == 0:
+                if self.instapeep_disabled:
+                    self.current_tier = 1
+                    continue
                 try:
                     response = self._request_with_429_retry(
                         self.scraper.get, url, timeout=30
@@ -121,6 +129,7 @@ class InstagramCollectorBase:
                         data = response.json()
                         follower_count = data.get("follower_count")
                         if follower_count is not None:
+                            self.current_tier = 0
                             return int(follower_count)
                         logger.warning(f"No follower count found in response for {username}")
                         return None
@@ -132,77 +141,72 @@ class InstagramCollectorBase:
                         self.instapeep_disabled = True
                 except Exception as e:
                     logger.error(f"Instapeep failed for {username}: {e}")
+                self.current_tier = 1
 
-            # -----------------------
-            # 2) Inflact (secondary)
-            # -----------------------
-            try:
-                inflact_response = self._request_with_429_retry(
-                    self.scraper.post,
-                    inflact_url,
-                    data=inflact_payload,
-                    timeout=30,
-                )
-                logger.info(
-                    f"Fallback request to {inflact_url} returned status {inflact_response.status_code}"
-                )
+            elif tier_idx == 1:
+                try:
+                    inflact_response = self._request_with_429_retry(
+                        self.scraper.post,
+                        inflact_url,
+                        data=inflact_payload,
+                        timeout=30,
+                    )
+                    logger.info(
+                        f"Fallback request to {inflact_url} returned status {inflact_response.status_code}"
+                    )
 
-                if inflact_response.status_code == 200:
-                    inflact_data = inflact_response.json() or {}
-                    profile = (inflact_data.get("data") or {}).get("profile") or {}
+                    if inflact_response.status_code == 200:
+                        inflact_data = inflact_response.json() or {}
+                        profile = (inflact_data.get("data") or {}).get("profile") or {}
 
-                    follower_count = (profile.get("engagement", {}) or {}).get("followers")
-                    if follower_count is None:
-                        follower_count = profile.get("followers")
+                        follower_count = (profile.get("engagement", {}) or {}).get("followers")
+                        if follower_count is None:
+                            follower_count = profile.get("followers")
 
-                    if follower_count is not None:
-                        return int(follower_count)
+                        if follower_count is not None:
+                            self.current_tier = 1
+                            return int(follower_count)
 
-                    logger.warning(f"Inflact fallback returned 200 but no follower count for {username}")
-                    return None
-
-                logger.warning(
-                    f"Inflact fallback HTTP {inflact_response.status_code} for {username}"
-                )
-            except Exception as e:
-                logger.error(f"Inflact fallback failed for {username}: {e}")
-
-            # -----------------------
-            # 3) InstaRadar (3rd)
-            # -----------------------
-            instaradar_url = f"{instaradar_base}/{username}"
-            try:
-                radar_response = self._request_with_429_retry(
-                    self.scraper.get, instaradar_url, timeout=30
-                )
-                logger.info(
-                    f"3rd fallback request to {instaradar_url} returned status {radar_response.status_code}"
-                )
-
-                if radar_response.status_code == 200:
-                    radar_data = radar_response.json() or {}
-                    profile = (radar_data.get("data") or {})
-                    follower_count = profile.get("follower_count")
-                    if follower_count is not None:
-                        return int(follower_count)
+                        logger.warning(f"Inflact fallback returned 200 but no follower count for {username}")
+                        return None
 
                     logger.warning(
-                        f"InstaRadar returned 200 but no follower count for {username}"
+                        f"Inflact fallback HTTP {inflact_response.status_code} for {username}"
                     )
-                    return None
+                except Exception as e:
+                    logger.error(f"Inflact fallback failed for {username}: {e}")
+                self.current_tier = 2
 
-                logger.warning(
-                    f"InstaRadar fallback HTTP {radar_response.status_code} for {username}"
-                )
-            except Exception as e:
-                logger.error(f"InstaRadar fallback failed for {username}: {e}")
+            elif tier_idx == 2:
+                instaradar_url = f"{instaradar_base}/{username}"
+                try:
+                    radar_response = self._request_with_429_retry(
+                        self.scraper.get, instaradar_url, timeout=30
+                    )
+                    logger.info(
+                        f"3rd fallback request to {instaradar_url} returned status {radar_response.status_code}"
+                    )
 
-            logger.warning(f"All APIs failed for {username} in lap {lap + 1}/{max_laps}")
-            if lap < max_laps - 1:
-                backoff = 5 * (lap + 1)
-                logger.info(f"Waiting {backoff}s before next lap for {username}")
-                time.sleep(backoff)
+                    if radar_response.status_code == 200:
+                        radar_data = radar_response.json() or {}
+                        profile = (radar_data.get("data") or {})
+                        follower_count = profile.get("follower_count")
+                        if follower_count is not None:
+                            self.current_tier = 2
+                            return int(follower_count)
 
+                        logger.warning(
+                            f"InstaRadar returned 200 but no follower count for {username}"
+                        )
+                        return None
+
+                    logger.warning(
+                        f"InstaRadar fallback HTTP {radar_response.status_code} for {username}"
+                    )
+                except Exception as e:
+                    logger.error(f"InstaRadar fallback failed for {username}: {e}")
+
+        logger.warning(f"All tiers exhausted for {username}")
         return None
 
     def _get_retry_after(self, response):
