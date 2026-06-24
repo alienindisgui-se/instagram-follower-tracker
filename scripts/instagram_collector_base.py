@@ -110,9 +110,10 @@ class InstagramCollectorBase:
         tier_labels = {0: "instapeep", 1: "inflact", 2: "instaradar"}
 
         max_tiers = 3
+        start_tier = self.current_tier
 
-        for tier_offset in range(max_tiers - self.current_tier):
-            tier_idx = self.current_tier + tier_offset
+        for tier_offset in range(max_tiers - start_tier):
+            tier_idx = start_tier + tier_offset
             label = tier_labels[tier_idx]
 
             if tier_idx == 0:
