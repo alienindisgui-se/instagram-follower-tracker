@@ -115,7 +115,9 @@ class InstagramCollectorBase:
                 # 1) Instapeep (primary)
                 # -----------------------
                 if not self.instapeep_disabled:
-                    response = self.scraper.get(url, timeout=30)
+                    response = self._request_with_429_retry(
+                        self.scraper.get, url, timeout=30
+                    )
                     logger.info(f"Request to {url} returned status {response.status_code}")
 
                     if response.status_code == 200:
@@ -138,7 +140,8 @@ class InstagramCollectorBase:
                 # -----------------------
                 inflact_response = None
                 try:
-                    inflact_response = self.scraper.post(
+                    inflact_response = self._request_with_429_retry(
+                        self.scraper.post,
                         inflact_url,
                         data=inflact_payload,
                         timeout=30,
@@ -181,7 +184,9 @@ class InstagramCollectorBase:
                 if self.inflact_failed:
                     instaradar_url = f"{instaradar_base}/{username}"
                     try:
-                        radar_response = self.scraper.get(instaradar_url, timeout=30)
+                        radar_response = self._request_with_429_retry(
+                            self.scraper.get, instaradar_url, timeout=30
+                        )
                         logger.info(
                             f"3rd fallback request to {instaradar_url} returned status {radar_response.status_code}"
                         )
@@ -206,8 +211,15 @@ class InstagramCollectorBase:
 
                 raise ApiUnavailableError(f"API unavailable for {username}")
 
-            except ApiUnavailableError:
-                raise
+            except ApiUnavailableError as e:
+                logger.warning(f"All fallbacks exhausted for {username}: {e}")
+                if attempt < instapeep_attempts - 1:
+                    backoff = 60 * (2 ** attempt)
+                    logger.info(
+                        f"Backing off {backoff}s before retry ({attempt + 1}/{instapeep_attempts})"
+                    )
+                    time.sleep(backoff)
+                    continue
             except Exception as e:
                 logger.error(f"Error fetching data for {username}: {e}")
                 if attempt < 2:
@@ -215,6 +227,30 @@ class InstagramCollectorBase:
                     continue
 
         return None
+
+    def _get_retry_after(self, response):
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return int(retry_after)
+            except ValueError:
+                pass
+        return None
+
+    def _request_with_429_retry(self, method, url, **kwargs):
+        max_retries = 3
+        base_delay = 60
+        for attempt in range(max_retries):
+            response = method(url, **kwargs)
+            if response.status_code != 429:
+                return response
+            retry_after = self._get_retry_after(response)
+            delay = retry_after if retry_after else base_delay * (2 ** attempt)
+            logger.warning(
+                f"HTTP 429 for {url}. Waiting {delay:.0f}s before retry ({attempt + 1}/{max_retries})"
+            )
+            time.sleep(delay)
+        return response
 
     def calculate_delta(self, current: int, previous: Optional[int]) -> str:
         """Calculate and format delta."""
@@ -248,12 +284,13 @@ class InstagramCollectorBase:
         embed = {
             "title": f"🚨 Instagram {report_type} Collection Failed",
             "description": (
-                "**Instapeep.com API is currently unavailable (HTTP 503 Service Unavailable)**\n\n"
-                "All follower data collection attempts failed. The API may be experiencing temporary downtime.\n\n"
-                "**Next steps:**\n"
-                "- Check https://instapeep.com status\n"
-                "- Retry collection manually when API recovers\n"
-                "- Consider implementing backup API endpoint"
+                "**Instagram follower data collection failed for one or more users.**\n\n"
+                "All available API endpoints were rate-limited or unavailable. "
+                "Some follower counts may be missing.\n\n"
+                "**Recommendations:**\n"
+                "- Retry collection in a few minutes\n"
+                "- Consider increasing delay between requests\n"
+                "- Monitor API rate limits"
             ),
             "color": 0xFF0000,
         }
@@ -349,8 +386,8 @@ class InstagramCollectorBase:
                     logger.warning(f"Failed to fetch data for {username}")
             except ApiUnavailableError as e:
                 logger.error(str(e))
-                logger.error("Stopping data collection for remaining usernames.")
-                break
+                logger.warning(f"Failed to fetch {username}, continuing with remaining usernames.")
+                continue
 
             if username != self.usernames[-1]:
                 delay = random.uniform(5, 15)
