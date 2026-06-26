@@ -1,0 +1,14 @@
+{
+  "last_updated": "2026-06-26T11:59:03.890553+00:00",
+  "fetches": {
+    "instapeep_failed": 0,
+    "instaradar_failed": 0,
+    "inflact_failed": 0,
+    "instapeep_success": 4,
+    "instaradar_success": 0,
+    "inflact_success": 12
+  },
+  "successfully_instapeep": "100.0%",
+  "successfully_instaradar": "0%",
+  "successfully_inflact": "100.0%"
+}
