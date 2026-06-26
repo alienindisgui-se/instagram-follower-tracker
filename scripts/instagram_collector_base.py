@@ -50,8 +50,6 @@ class InstagramCollectorBase:
         # Load config
         self.usernames = self._load_config()
 
-        # Run-scoped circuit breakers / state.
-        # - Instapeep: if we see HTTP 503 at least once during the run, disable Instapeep for the remainder.
         self.instapeep_disabled = False
 
     def _load_config(self) -> list:
@@ -87,19 +85,13 @@ class InstagramCollectorBase:
     def get_follower_count(self, username: str) -> Optional[int]:
         """Get follower count for a username.
 
-        Cycle: Instapeep -> Inflact -> InstaRadar, repeat up to 3 times.
-        If Instapeep returns HTTP 503 it is disabled for the remainder of the run.
+        Order: Instapeep -> Inflact.
         """
 
         url = f"https://instapeep.com/api/profile/{username}"
 
         inflact_url = "https://inflact.com/profile-analyzer/v1/analytics/?lang=en"
         inflact_payload = {"url": username}
-
-        instaradar_base = "https://www.instaradar.app/api/user"
-
-        tier_labels = {0: "instapeep", 1: "inflact", 2: "instaradar"}
-        max_attempts = 3
 
         def _get_error_message(response):
             try:
@@ -110,109 +102,64 @@ class InstagramCollectorBase:
                 pass
             return ""
 
-        for attempt in range(max_attempts):
-            for tier_idx in range(3):
-                label = tier_labels[tier_idx]
+        response = None
+        if not self.instapeep_disabled:
+            try:
+                response = self.scraper.get(url, timeout=30)
+            except Exception as e:
+                logger.error(f"[instapeep] {username} error: {e}")
 
-                if tier_idx == 0:
-                    if self.instapeep_disabled:
-                        continue
-                    try:
-                        response = self.scraper.get(url, timeout=30)
-                    except Exception as e:
-                        logger.error(f"[{label}] {username} error: {e}")
-                        continue
+        if response and response.status_code == 200:
+            data = response.json()
+            follower_count = data.get("follower_count")
+            if follower_count is not None:
+                logger.info(f"[instapeep] [{username}] [{int(follower_count)}]")
+                return int(follower_count)
+            logger.warning(f"[instapeep] {username} no count in response")
+            return None
 
-                    if response.status_code == 200:
-                        data = response.json()
-                        follower_count = data.get("follower_count")
-                        if follower_count is not None:
-                            logger.info(f"[{label}] [{username}] [{int(follower_count)}]")
-                            return int(follower_count)
-                        logger.warning(f"[{label}] {username} no count in response")
-                        return None
+        if response and response.status_code == 503:
+            err_msg = _get_error_message(response)
+            logger.warning(
+                f"[instapeep] {username} 503 service unavailable{f' - {err_msg}' if err_msg else ''}"
+            )
 
-                    if response.status_code == 429:
-                        logger.warning(f"[{label}] {username} 429, trying next tier")
-                        continue
+        if response and response.status_code == 503:
+            self.instapeep_disabled = True
 
-                    if response.status_code == 503:
-                        err_msg = _get_error_message(response)
-                        logger.warning(
-                            f"[{label}] {username} 503 service unavailable{f' - {err_msg}' if err_msg else ''}, disabling for remainder of run"
-                        )
-                        self.instapeep_disabled = True
-                        continue
+        try:
+            inflact_response = self.scraper.post(
+                inflact_url,
+                data=inflact_payload,
+                timeout=30,
+            )
+        except Exception as e:
+            logger.error(f"[inflact] {username} error: {e}")
+            return None
 
-                    err_msg = _get_error_message(response)
-                    logger.warning(f"[{label}] {username} HTTP {response.status_code}{f' - {err_msg}' if err_msg else ''}, trying next tier")
+        if inflact_response.status_code == 200:
+            inflact_data = inflact_response.json() or {}
+            profile = (inflact_data.get("data") or {}).get("profile") or {}
 
-                elif tier_idx == 1:
-                    try:
-                        inflact_response = self.scraper.post(
-                            inflact_url,
-                            data=inflact_payload,
-                            timeout=30,
-                        )
-                    except Exception as e:
-                        logger.error(f"[{label}] {username} error: {e}")
-                        continue
+            follower_count = (profile.get("engagement", {}) or {}).get("followers")
+            if follower_count is None:
+                follower_count = profile.get("followers")
 
-                    if inflact_response.status_code == 200:
-                        inflact_data = inflact_response.json() or {}
-                        profile = (inflact_data.get("data") or {}).get("profile") or {}
+            if follower_count is not None:
+                logger.info(f"[inflact] [{username}] [{int(follower_count)}]")
+                return int(follower_count)
 
-                        follower_count = (profile.get("engagement", {}) or {}).get("followers")
-                        if follower_count is None:
-                            follower_count = profile.get("followers")
+            logger.warning(f"[inflact] {username} 200 but no count")
+            return None
 
-                        if follower_count is not None:
-                            logger.info(f"[{label}] [{username}] [{int(follower_count)}]")
-                            return int(follower_count)
+        err_msg = _get_error_message(inflact_response)
+        if inflact_response.status_code == 429:
+            logger.warning(f"[inflact] {username} 429, trying next tier")
+        elif inflact_response.status_code == 503:
+            logger.warning(f"[inflact] {username} 503 provider overloaded{f' - {err_msg}' if err_msg else ''}")
+        else:
+            logger.warning(f"[inflact] {username} HTTP {inflact_response.status_code}{f' - {err_msg}' if err_msg else ''}")
 
-                        logger.warning(f"[{label}] {username} 200 but no count")
-                        return None
-
-                    if inflact_response.status_code == 429:
-                        logger.warning(f"[{label}] {username} 429, trying next tier")
-                    elif inflact_response.status_code == 503:
-                        err_msg = _get_error_message(inflact_response)
-                        logger.warning(f"[{label}] {username} 503 provider overloaded{f' - {err_msg}' if err_msg else ''}, trying next tier")
-                    else:
-                        err_msg = _get_error_message(inflact_response)
-                        logger.warning(f"[{label}] {username} HTTP {inflact_response.status_code}{f' - {err_msg}' if err_msg else ''}, trying next tier")
-
-                elif tier_idx == 2:
-                    instaradar_url = f"{instaradar_base}/{username}"
-                    try:
-                        radar_response = self.scraper.get(instaradar_url, timeout=30)
-                    except Exception as e:
-                        logger.error(f"[{label}] {username} error: {e}")
-                        continue
-
-                    if radar_response.status_code == 200:
-                        radar_data = radar_response.json() or {}
-                        profile = (radar_data.get("data") or {})
-                        follower_count = profile.get("follower_count")
-                        if follower_count is not None:
-                            logger.info(f"[{label}] [{username}] [{int(follower_count)}]")
-                            return int(follower_count)
-
-                        logger.warning(f"[{label}] {username} 200 but no count")
-                        return None
-
-                    if radar_response.status_code == 429:
-                        logger.warning(f"[{label}] {username} 429, trying next tier")
-                    elif radar_response.status_code == 503:
-                        err_msg = _get_error_message(radar_response)
-                        logger.warning(f"[{label}] {username} 503 provider overloaded{f' - {err_msg}' if err_msg else ''}, trying next tier")
-                    else:
-                        err_msg = _get_error_message(radar_response)
-                        logger.warning(f"[{label}] {username} HTTP {radar_response.status_code}{f' - {err_msg}' if err_msg else ''}, trying next tier")
-
-            logger.warning(f"[{username}] cycle {attempt + 1}/{max_attempts} exhausted")
-
-        logger.warning(f"All cycles exhausted for {username}")
         return None
 
     def calculate_delta(self, current: int, previous: Optional[int]) -> str:

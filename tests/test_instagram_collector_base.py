@@ -59,25 +59,23 @@ class TestGetFollowerCount:
         base_collector.scraper.get.assert_called_once()
         base_collector.scraper.post.assert_called_once()
 
-    def test_instapeep_500_then_inflact_429_then_instaradar_success(self, base_collector):
+    def test_instapeep_fail_then_inflact_success(self, base_collector):
         instapeep_resp = make_response(500)
         instapeep_resp.headers = {}
-        inflact_resp = make_response(429)
-        inflact_resp.headers = {}
-        instaradar_resp = make_response(
-            200, {"data": {"follower_count": 99999}}
+        inflact_resp = make_response(
+            200, {"data": {"profile": {"followers": 99999}}}
         )
 
-        base_collector.scraper.get.side_effect = [instapeep_resp, instaradar_resp]
+        base_collector.scraper.get.return_value = instapeep_resp
         base_collector.scraper.post.return_value = inflact_resp
 
         result = base_collector.get_follower_count("testuser")
 
         assert result == 99999
-        assert base_collector.scraper.get.call_count == 2
+        base_collector.scraper.get.assert_called_once()
         base_collector.scraper.post.assert_called_once()
 
-    def test_all_tiers_fail_returns_none(self, base_collector):
+    def test_all_fallbacks_fail_returns_none(self, base_collector):
         base_collector.scraper.get.return_value = make_response(429)
         base_collector.scraper.post.return_value = make_response(429)
 
@@ -88,19 +86,18 @@ class TestGetFollowerCount:
     def test_instapeep_503_disables_for_remainder(self, base_collector):
         resp_503 = make_response(503)
         resp_503.headers = {}
-        instaradar_resp = make_response(
-            200, {"data": {"follower_count": 11111}}
+        inflact_resp = make_response(
+            200, {"data": {"profile": {"followers": 22222}}}
         )
 
         base_collector.scraper.get.side_effect = [
             resp_503,
-            instaradar_resp,
         ]
-        base_collector.scraper.post.return_value = make_response(500)
+        base_collector.scraper.post.return_value = inflact_resp
 
         result = base_collector.get_follower_count("testuser")
 
-        assert result == 11111
+        assert result == 22222
         assert base_collector.instapeep_disabled is True
 
         base_collector.scraper.get.reset_mock()
@@ -116,30 +113,30 @@ class TestGetFollowerCount:
         base_collector.scraper.get.assert_not_called()
         base_collector.scraper.post.assert_called_once()
 
-    def test_instaradar_403_handled(self, base_collector):
+    def test_inflact_500_returns_none(self, base_collector):
         instapeep_resp = make_response(429)
         instapeep_resp.headers = {}
         inflact_resp = make_response(500)
-        instaradar_resp = make_response(403)
 
-        base_collector.scraper.get.side_effect = [instapeep_resp, instaradar_resp]
+        base_collector.scraper.get.return_value = instapeep_resp
         base_collector.scraper.post.return_value = inflact_resp
 
         result = base_collector.get_follower_count("testuser")
 
         assert result is None
 
-    def test_instapeep_exception_moves_to_next_tier(self, base_collector):
+    def test_instapeep_exception_moves_to_inflact(self, base_collector):
         base_collector.scraper.get.side_effect = [
             Exception("Network error"),
-            make_response(200, {"data": {"follower_count": 7777}}),
         ]
-        base_collector.scraper.post.return_value = make_response(429)
+        base_collector.scraper.post.return_value = make_response(
+            200, {"data": {"profile": {"followers": 7777}}}
+        )
 
         result = base_collector.get_follower_count("testuser")
 
         assert result == 7777
-        assert base_collector.scraper.get.call_count == 2
+        assert base_collector.scraper.get.call_count == 1
 
 
 class TestCollectCurrentData:
