@@ -21,6 +21,8 @@ def base_collector(tmp_path, monkeypatch):
         data_file=str(data_file),
         scraper=MagicMock(),
     )
+    collector.stats_file = str(tmp_path / "stats.json")
+    collector.stats = collector._load_stats()
     return collector
 
 
@@ -176,3 +178,41 @@ class TestCollectCurrentData:
 
         assert len(result) == 2
         assert base_collector.instapeep_disabled is True
+
+
+class TestStats:
+    def test_stats_track_success_and_failure(self, base_collector, tmp_path):
+        base_collector.usernames = ["user1", "user2"]
+        base_collector.scraper.get.side_effect = [
+            make_response(200, {"follower_count": 100}),
+            make_response(429),
+        ]
+        base_collector.scraper.post.return_value = make_response(
+            200, {"data": {"profile": {"followers": 200}}}
+        )
+
+        with patch("time.sleep"):
+            base_collector.collect_current_data()
+
+        assert base_collector.stats["instapeep_success"] == 1
+        assert base_collector.stats["instapeep_failed"] == 1
+        assert base_collector.stats["inflact_success"] == 1
+        assert base_collector.stats["inflact_failed"] == 0
+
+    def test_stats_file_written(self, base_collector, tmp_path):
+        base_collector.stats_file = str(tmp_path / "stats.json")
+        base_collector.usernames = ["user1"]
+        base_collector.scraper.get.return_value = make_response(
+            200, {"follower_count": 100}
+        )
+
+        with patch("time.sleep"):
+            base_collector.collect_current_data()
+
+        assert os.path.exists(base_collector.stats_file)
+        with open(base_collector.stats_file, "r") as f:
+            data = json.load(f)
+        assert "fetches" in data
+        assert "last_updated" in data
+        assert "successfully_instapeep" in data
+        assert data["fetches"]["instapeep_success"] == 1

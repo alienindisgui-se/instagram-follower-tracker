@@ -41,6 +41,7 @@ class InstagramCollectorBase:
         self.config_file = config_file
         self.data_file = data_file
         self.discord_webhook = discord_webhook or os.getenv("IG_TRACKER_DISCORD_WEBHOOK")
+        self.stats_file = os.getenv("IG_TRACKER_STATS_FILE", "data/stats.json")
 
         # Use cloudscraper with built-in Cloudflare bypass (no proxy needed)
         self.scraper = scraper or cloudscraper.create_scraper(
@@ -51,6 +52,7 @@ class InstagramCollectorBase:
         self.usernames = self._load_config()
 
         self.instapeep_disabled = False
+        self.stats = self._load_stats()
 
     def _load_config(self) -> list:
         """Load usernames from config file."""
@@ -82,6 +84,47 @@ class InstagramCollectorBase:
         with open(self.data_file, "w") as f:
             json.dump(data, f, indent=2)
 
+    def _load_stats(self) -> Dict[str, int]:
+        """Load cumulative API fetch stats."""
+        defaults = {
+            "instapeep_failed": 0,
+            "instaradar_failed": 0,
+            "inflact_failed": 0,
+            "instapeep_success": 0,
+            "instaradar_success": 0,
+            "inflact_success": 0,
+        }
+        try:
+            with open(self.stats_file, "r") as f:
+                data = json.load(f)
+                fetches = data.get("fetches", {})
+                defaults.update({
+                    k: fetches.get(k, v) for k, v in defaults.items()
+                })
+                return defaults
+        except FileNotFoundError:
+            return defaults
+        except json.JSONDecodeError:
+            return defaults
+
+    def _save_stats(self) -> None:
+        """Save cumulative API fetch stats to disk."""
+        fetches = self.stats
+        total_instapeep = fetches["instapeep_success"] + fetches["instapeep_failed"]
+        total_instaradar = fetches["instaradar_success"] + fetches["instaradar_failed"]
+        total_inflact = fetches["inflact_success"] + fetches["inflact_failed"]
+
+        output = {
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "fetches": fetches,
+            "successfully_instapeep": f"{fetches['instapeep_success'] / total_instapeep * 100:.1f}%" if total_instapeep else "0%",
+            "successfully_instaradar": f"{fetches['instaradar_success'] / total_instaradar * 100:.1f}%" if total_instaradar else "0%",
+            "successfully_inflact": f"{fetches['inflact_success'] / total_inflact * 100:.1f}%" if total_inflact else "0%",
+        }
+        os.makedirs(os.path.dirname(self.stats_file), exist_ok=True)
+        with open(self.stats_file, "w") as f:
+            json.dump(output, f, indent=2)
+
     def get_follower_count(self, username: str) -> Optional[int]:
         """Get follower count for a username.
 
@@ -108,12 +151,14 @@ class InstagramCollectorBase:
                 response = self.scraper.get(url, timeout=30)
             except Exception as e:
                 logger.error(f"[instapeep] {username} error: {e}")
+                self.stats["instapeep_failed"] += 1
 
         if response and response.status_code == 200:
             data = response.json()
             follower_count = data.get("follower_count")
             if follower_count is not None:
                 logger.info(f"[instapeep] [{username}] [{int(follower_count)}]")
+                self.stats["instapeep_success"] += 1
                 return int(follower_count)
             logger.warning(f"[instapeep] {username} no count in response")
             return None
@@ -127,6 +172,9 @@ class InstagramCollectorBase:
         if response and response.status_code == 503:
             self.instapeep_disabled = True
 
+        if response and response.status_code not in (200,):
+            self.stats["instapeep_failed"] += 1
+
         try:
             inflact_response = self.scraper.post(
                 inflact_url,
@@ -135,6 +183,7 @@ class InstagramCollectorBase:
             )
         except Exception as e:
             logger.error(f"[inflact] {username} error: {e}")
+            self.stats["inflact_failed"] += 1
             return None
 
         if inflact_response.status_code == 200:
@@ -147,11 +196,13 @@ class InstagramCollectorBase:
 
             if follower_count is not None:
                 logger.info(f"[inflact] [{username}] [{int(follower_count)}]")
+                self.stats["inflact_success"] += 1
                 return int(follower_count)
 
             logger.warning(f"[inflact] {username} 200 but no count")
             return None
 
+        self.stats["inflact_failed"] += 1
         err_msg = _get_error_message(inflact_response)
         if inflact_response.status_code == 429:
             logger.warning(f"[inflact] {username} 429, trying next tier")
@@ -293,6 +344,7 @@ class InstagramCollectorBase:
             if username != self.usernames[-1]:
                 time.sleep(random.uniform(5, 15))
 
+        self._save_stats()
         return current_data
 
     def get_previous_sunday(self) -> str:
