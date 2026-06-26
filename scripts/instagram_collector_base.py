@@ -36,13 +36,14 @@ class InstagramCollectorBase:
         config_file: str = "config/instagram_tracker_settings.json",
         data_file: str = "data/instagram_follower_history.json",
         discord_webhook: Optional[str] = None,
+        scraper=None,
     ):
         self.config_file = config_file
         self.data_file = data_file
         self.discord_webhook = discord_webhook or os.getenv("IG_TRACKER_DISCORD_WEBHOOK")
 
         # Use cloudscraper with built-in Cloudflare bypass (no proxy needed)
-        self.scraper = cloudscraper.create_scraper(
+        self.scraper = scraper or cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows", "desktop": True}
         )
 
@@ -100,6 +101,15 @@ class InstagramCollectorBase:
         tier_labels = {0: "instapeep", 1: "inflact", 2: "instaradar"}
         max_attempts = 3
 
+        def _get_error_message(response):
+            try:
+                data = response.json()
+                if isinstance(data, dict):
+                    return data.get("message") or data.get("error") or ""
+            except Exception:
+                pass
+            return ""
+
         for attempt in range(max_attempts):
             for tier_idx in range(3):
                 label = tier_labels[tier_idx]
@@ -127,13 +137,15 @@ class InstagramCollectorBase:
                         continue
 
                     if response.status_code == 503:
+                        err_msg = _get_error_message(response)
                         logger.warning(
-                            f"[{label}] {username} 503, disabling for remainder of run"
+                            f"[{label}] {username} 503 service unavailable{f' - {err_msg}' if err_msg else ''}, disabling for remainder of run"
                         )
                         self.instapeep_disabled = True
                         continue
 
-                    logger.warning(f"[{label}] {username} HTTP {response.status_code}, trying next tier")
+                    err_msg = _get_error_message(response)
+                    logger.warning(f"[{label}] {username} HTTP {response.status_code}{f' - {err_msg}' if err_msg else ''}, trying next tier")
 
                 elif tier_idx == 1:
                     try:
@@ -163,8 +175,12 @@ class InstagramCollectorBase:
 
                     if inflact_response.status_code == 429:
                         logger.warning(f"[{label}] {username} 429, trying next tier")
+                    elif inflact_response.status_code == 503:
+                        err_msg = _get_error_message(inflact_response)
+                        logger.warning(f"[{label}] {username} 503 provider overloaded{f' - {err_msg}' if err_msg else ''}, trying next tier")
                     else:
-                        logger.warning(f"[{label}] {username} HTTP {inflact_response.status_code}, trying next tier")
+                        err_msg = _get_error_message(inflact_response)
+                        logger.warning(f"[{label}] {username} HTTP {inflact_response.status_code}{f' - {err_msg}' if err_msg else ''}, trying next tier")
 
                 elif tier_idx == 2:
                     instaradar_url = f"{instaradar_base}/{username}"
@@ -187,8 +203,12 @@ class InstagramCollectorBase:
 
                     if radar_response.status_code == 429:
                         logger.warning(f"[{label}] {username} 429, trying next tier")
+                    elif radar_response.status_code == 503:
+                        err_msg = _get_error_message(radar_response)
+                        logger.warning(f"[{label}] {username} 503 provider overloaded{f' - {err_msg}' if err_msg else ''}, trying next tier")
                     else:
-                        logger.warning(f"[{label}] {username} HTTP {radar_response.status_code}, trying next tier")
+                        err_msg = _get_error_message(radar_response)
+                        logger.warning(f"[{label}] {username} HTTP {radar_response.status_code}{f' - {err_msg}' if err_msg else ''}, trying next tier")
 
             logger.warning(f"[{username}] cycle {attempt + 1}/{max_attempts} exhausted")
 
