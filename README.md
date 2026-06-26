@@ -8,6 +8,7 @@
 ![Daily](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-daily-tracker.yml?branch=main&label=Daily%20Update&logo=instagram&style=for-the-badge&color=0099FF)
 ![Weekly](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-weekly-tracker.yml?branch=main&label=Weekly%20Update&logo=instagram&style=for-the-badge&color=00FF88)
 ![Monthly](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/instagram-monthly-tracker.yml?branch=main&label=Monthly%20Update&logo=instagram&style=for-the-badge&color=8800FF)
+![Tests](https://img.shields.io/github/actions/workflow/status/alienindisgui-se/instagram-follower-tracker/tests.yml?branch=main&label=Tests&logo=github&style=for-the-badge&color=orange)
 
 A sophisticated Python-based system for automated Instagram follower tracking with daily, weekly, and monthly comparison reports, Discord webhook notifications, GitHub Actions automation, and intelligent historical data management.
 
@@ -18,8 +19,10 @@ A sophisticated Python-based system for automated Instagram follower tracking wi
 - **💬 Discord Notifications**: Color-coded embed reports with follower changes
 - **📈 Historical Data**: JSON-based storage with automatic cleanup and retention policies
 - **🔒 Security-First**: Error handling and Cloudflare bypass with cloudscraper
-- **🔄 Fallback Logic**: Intelligent data fallback when previous periods are missing
-- **📱 Instapeep API**: Reliable data fetching using Instapeep.com API endpoints
+- **🔄 Smart Fallback Chain**: Tries Instapeep → Inflact, with 3 full retry cycles per user
+- **📊 Stats Tracking**: Cumulative API success/failure stats saved to `data/stats.json`
+- **✅ Test Suite**: 14 pytest tests covering fallback logic, Discord notifications, and stats persistence
+- **🔁 CI/CD**: GitHub Actions test workflow runs on every push and pull request
 - **📢 Release Notes**: Automated Discord notifications for new GitHub releases
 
 ## 🏗️ Architecture
@@ -31,6 +34,10 @@ instagram-follower-tracker/
 │   ├── instagram_daily_collector.py    # Daily tracking
 │   ├── instagram_weekly_collector.py   # Weekly tracking
 │   └── instagram_monthly_collector.py  # Monthly tracking
+├── tests/
+│   ├── test_instagram_collector_base.py # Collector unit tests
+│   ├── test_discord_notifications.py   # Discord notification tests
+│   └── conftest.py                     # Pytest fixtures
 ├── config/
 │   └── instagram_tracker_settings.json # Username configuration
 ├── data/
@@ -75,7 +82,7 @@ IG_TRACKER_DISCORD_WEBHOOK=https://discord.com/api/webhooks/your/webhook/id
 
 ## 📊 Data Structure
 
-The system stores follower data in `data/instagram_follower_history.json`:
+### Follower History (`data/instagram_follower_history.json`)
 
 ```json
 {
@@ -100,6 +107,24 @@ The system stores follower data in `data/instagram_follower_history.json`:
 }
 ```
 
+### API Stats (`data/stats.json`)
+
+Cumulative API fetch statistics tracked across all runs:
+
+```json
+{
+  "last_updated": "2026-06-26T05:31:20.217442+00:00",
+  "fetches": {
+    "instapeep_failed": 5,
+    "instapeep_success": 3,
+    "inflact_failed": 0,
+    "inflact_success": 7
+  },
+  "successfully_instapeep": "37.5%",
+  "successfully_inflact": "100.0%"
+}
+```
+
 ### Data Retention Policies
 
 - **Daily data**: Last 40 days
@@ -116,6 +141,12 @@ The system stores follower data in `data/instagram_follower_history.json`:
 | Weekly Tracker | `30 6 * * 0` | Runs Sundays at 06:30 UTC |
 | Monthly Tracker | `0 7 1 * *` | Runs 1st of month at 07:00 UTC |
 | Release Notes | On Release | Sends Discord notification on new release |
+
+### CI/CD
+
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| Tests | Push / Pull Request | Runs pytest suite on every push and PR |
 
 ### Required GitHub Secrets
 
@@ -155,13 +186,31 @@ The system sends rich embed notifications with:
 🔴 **username2** lost the most: -1.2%
 ```
 
+### Failure Notification
+
+When data collection fails (e.g., APIs are rate-limited or unavailable):
+
+```
+🚨 Instagram Daily Collection Failed
+
+**Instagram follower data collection failed for one or more users.**
+
+All available API endpoints were rate-limited or unavailable. Some follower counts may be missing.
+
+**Recommendations:**
+- Retry collection in a few minutes
+- Consider increasing delay between requests
+- Monitor API rate limits
+```
+
 ## 🔒 Security Considerations
 
 ### Rate Limiting
 
 - **Request delays**: 5-15 seconds between username requests
-- **Error handling**: Automatic retry with exponential backoff
-- **Fail-safe**: Aborts collection completely if API returns 3 consecutive 503 Service Unavailable errors, preventing partial data updates
+- **Retry cycles**: Each user gets up to 3 full cycles (Instapeep → Inflact → repeat) before failing
+- **No long waits**: 429 rate-limits move to next tier immediately (no 10s+ delays)
+- **503 handling**: Instapeep is disabled permanently for the run after first 503 to avoid wasting retries
 - **Cloudflare bypass**: Uses cloudscraper for reliable access
 
 ### API Security
@@ -172,13 +221,12 @@ The system sends rich embed notifications with:
 
 ## 📱 API Method
 
-The system uses Instapeep.com API endpoint:
+The system uses a two-tier fallback strategy:
 
-```
-https://instapeep.com/api/profile/{username}
-```
+1. **Primary**: `https://instapeep.com/api/profile/{username}`
+2. **Secondary**: `https://inflact.com/profile-analyzer/v1/analytics/?lang=en`
 
-**Response Format:**
+**Instapeep Response Format:**
 ```json
 {
   "username": "user_12345",
@@ -191,11 +239,26 @@ https://instapeep.com/api/profile/{username}
 }
 ```
 
+**Inflact Response Format:**
+```json
+{
+  "data": {
+    "profile": {
+      "followers": 1234567,
+      "engagement": {
+        "followers": 1234567
+      }
+    }
+  }
+}
+```
+
 **Key Features:**
 - No authentication required
 - Automatic Cloudflare bypass via cloudscraper
-- Clean JSON response with follower count
-- More reliable than Instagram's mobile API
+- Clean JSON responses
+- Prettified logs: `[inflact] [username] [count]`
+- Stats tracking per API endpoint
 
 ## 🚀 Usage
 
@@ -258,4 +321,17 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Note**: This tool uses Instapeep.com API for data collection. Ensure compliance with Instagram's Terms of Service and Instapeep.com usage policies when using this system.
+**Note**: This tool uses Instapeep.com and Inflact.com APIs for data collection. Ensure compliance with Instagram's Terms of Service and respective API usage policies when using this system.
+
+## 🧪 Running Tests Locally
+
+```bash
+# Install test dependencies
+pip install pytest pytest-mock
+
+# Run full test suite
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_instagram_collector_base.py -v
+```

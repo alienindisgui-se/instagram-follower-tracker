@@ -17,9 +17,6 @@ import cloudscraper
 from dotenv import load_dotenv
 
 
-class ApiUnavailableError(Exception):
-    """Exception raised when the API is completely unavailable."""
-
 
 # Load environment variables
 load_dotenv()
@@ -39,24 +36,23 @@ class InstagramCollectorBase:
         config_file: str = "config/instagram_tracker_settings.json",
         data_file: str = "data/instagram_follower_history.json",
         discord_webhook: Optional[str] = None,
+        scraper=None,
     ):
         self.config_file = config_file
         self.data_file = data_file
         self.discord_webhook = discord_webhook or os.getenv("IG_TRACKER_DISCORD_WEBHOOK")
+        self.stats_file = os.getenv("IG_TRACKER_STATS_FILE", "data/stats.json")
 
         # Use cloudscraper with built-in Cloudflare bypass (no proxy needed)
-        self.scraper = cloudscraper.create_scraper(
+        self.scraper = scraper or cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows", "desktop": True}
         )
 
         # Load config
         self.usernames = self._load_config()
 
-        # Run-scoped circuit breakers / state.
-        # - Instapeep: if we see HTTP 503 at least once during the run, disable Instapeep for the remainder.
-        # - Inflact: if it fails at least once (non-200 or exception), disable it for the remainder and use InstaRadar as 3rd fallback.
         self.instapeep_disabled = False
-        self.inflact_failed = False
+        self.stats = self._load_stats()
 
     def _load_config(self) -> list:
         """Load usernames from config file."""
@@ -64,11 +60,11 @@ class InstagramCollectorBase:
             with open(self.config_file, "r") as f:
                 data = json.load(f)
                 return data.get("usernames", [])
-        except FileNotFoundError:
-            logger.error(f"Configuration file {self.config_file} not found")
+        except FileNotFoundError as e:
+            logger.exception(f"Configuration file {self.config_file} not found")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in configuration file: {e}")
+            logger.exception(f"Invalid JSON in configuration file: {e}")
             sys.exit(1)
 
     def _load_history(self) -> Dict:
@@ -79,7 +75,7 @@ class InstagramCollectorBase:
         except FileNotFoundError:
             return {"daily": {}, "weekly": {}, "monthly": {}}
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in data file: {e}")
+            logger.exception(f"Invalid JSON in data file: {e}")
             return {"daily": {}, "weekly": {}, "monthly": {}}
 
     def _save_history(self, data: Dict) -> None:
@@ -88,16 +84,51 @@ class InstagramCollectorBase:
         with open(self.data_file, "w") as f:
             json.dump(data, f, indent=2)
 
+    def _load_stats(self) -> Dict[str, int]:
+        """Load cumulative API fetch stats."""
+        defaults = {
+            "instapeep_failed": 0,
+            "instaradar_failed": 0,
+            "inflact_failed": 0,
+            "instapeep_success": 0,
+            "instaradar_success": 0,
+            "inflact_success": 0,
+        }
+        try:
+            with open(self.stats_file, "r") as f:
+                data = json.load(f)
+                fetches = data.get("fetches", {})
+                defaults.update({
+                    k: fetches.get(k, v) for k, v in defaults.items()
+                })
+                return defaults
+        except FileNotFoundError:
+            return defaults
+        except json.JSONDecodeError:
+            return defaults
+
+    def _save_stats(self) -> None:
+        """Save cumulative API fetch stats to disk."""
+        fetches = self.stats
+        total_instapeep = fetches["instapeep_success"] + fetches["instapeep_failed"]
+        total_instaradar = fetches["instaradar_success"] + fetches["instaradar_failed"]
+        total_inflact = fetches["inflact_success"] + fetches["inflact_failed"]
+
+        output = {
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "fetches": fetches,
+            "successfully_instapeep": f"{fetches['instapeep_success'] / total_instapeep * 100:.1f}%" if total_instapeep else "0%",
+            "successfully_instaradar": f"{fetches['instaradar_success'] / total_instaradar * 100:.1f}%" if total_instaradar else "0%",
+            "successfully_inflact": f"{fetches['inflact_success'] / total_inflact * 100:.1f}%" if total_inflact else "0%",
+        }
+        os.makedirs(os.path.dirname(self.stats_file), exist_ok=True)
+        with open(self.stats_file, "w") as f:
+            json.dump(output, f, indent=2)
+
     def get_follower_count(self, username: str) -> Optional[int]:
         """Get follower count for a username.
 
-        Order:
-          1) Instapeep
-          2) Inflact
-          3) InstaRadar
-
-        InstaRadar must be attempted once Inflact fails (including exceptions like timeouts),
-        regardless of whether Instapeep was disabled via HTTP 503.
+        Order: Instapeep -> Inflact.
         """
 
         url = f"https://instapeep.com/api/profile/{username}"
@@ -105,114 +136,80 @@ class InstagramCollectorBase:
         inflact_url = "https://inflact.com/profile-analyzer/v1/analytics/?lang=en"
         inflact_payload = {"url": username}
 
-        instaradar_base = "https://www.instaradar.app/api/user"
-
-        instapeep_attempts = 0 if self.instapeep_disabled else 3
-
-        for attempt in range(instapeep_attempts if instapeep_attempts else 1):
+        def _get_error_message(response):
             try:
-                # -----------------------
-                # 1) Instapeep (primary)
-                # -----------------------
-                if not self.instapeep_disabled:
-                    response = self.scraper.get(url, timeout=30)
-                    logger.info(f"Request to {url} returned status {response.status_code}")
+                data = response.json()
+                if isinstance(data, dict):
+                    return data.get("message") or data.get("error") or ""
+            except Exception:
+                pass
+            return ""
 
-                    if response.status_code == 200:
-                        data = response.json()
-                        follower_count = data.get("follower_count")
-                        if follower_count is not None:
-                            return int(follower_count)
-                        logger.warning(f"No follower count found in response for {username}")
-                        return None
-
-                    # Never retry on 503: move to next fallback option.
-                    if response.status_code == 503:
-                        logger.warning(
-                            f"HTTP 503 Service Unavailable for {username} (Instapeep). Disabling Instapeep for remainder of run."
-                        )
-                        self.instapeep_disabled = True
-
-                # -----------------------
-                # 2) Inflact (secondary)
-                # -----------------------
-                inflact_response = None
-                try:
-                    inflact_response = self.scraper.post(
-                        inflact_url,
-                        data=inflact_payload,
-                        timeout=30,
-                    )
-                    logger.info(
-                        f"Fallback request to {inflact_url} returned status {inflact_response.status_code}"
-                    )
-
-                    if inflact_response.status_code == 200:
-                        inflact_data = inflact_response.json() or {}
-                        profile = (inflact_data.get("data") or {}).get("profile") or {}
-
-                        follower_count = (profile.get("engagement", {}) or {}).get("followers")
-                        if follower_count is None:
-                            follower_count = profile.get("followers")
-
-                        if follower_count is not None:
-                            return int(follower_count)
-
-                        logger.warning(f"Inflact fallback returned 200 but no follower count for {username}")
-                        return None
-
-                    logger.warning(
-                        f"Inflact fallback HTTP {inflact_response.status_code} for {username}"
-                    )
-                except Exception as e:
-                    logger.error(f"Inflact fallback failed for {username}: {e}")
-
-                    # Mark Inflact as failed for the remainder of the run.
-                # This includes exceptions (inflact_response stays None).
-                inflact_failed_this_call = inflact_response is None or inflact_response.status_code != 200
-                if inflact_failed_this_call:
-                    self.inflact_failed = True
-
-                # -----------------------
-                # 3) InstaRadar (3rd)
-                # -----------------------
-                # InstaRadar must run whenever Inflact fails (including timeouts/exceptions).
-                # Do NOT gate this on whether Instapeep was disabled; Instapeep may only be rate-limited.
-                if self.inflact_failed:
-                    instaradar_url = f"{instaradar_base}/{username}"
-                    try:
-                        radar_response = self.scraper.get(instaradar_url, timeout=30)
-                        logger.info(
-                            f"3rd fallback request to {instaradar_url} returned status {radar_response.status_code}"
-                        )
-
-                        if radar_response.status_code == 200:
-                            radar_data = radar_response.json() or {}
-                            profile = (radar_data.get("data") or {})
-                            follower_count = profile.get("follower_count")
-                            if follower_count is not None:
-                                return int(follower_count)
-
-                            logger.warning(
-                                f"InstaRadar returned 200 but no follower count for {username}"
-                            )
-                            return None
-
-                        logger.warning(
-                            f"InstaRadar fallback HTTP {radar_response.status_code} for {username}"
-                        )
-                    except Exception as e:
-                        logger.error(f"InstaRadar fallback failed for {username}: {e}")
-
-                raise ApiUnavailableError(f"API unavailable for {username}")
-
-            except ApiUnavailableError:
-                raise
+        response = None
+        if not self.instapeep_disabled:
+            try:
+                response = self.scraper.get(url, timeout=30)
             except Exception as e:
-                logger.error(f"Error fetching data for {username}: {e}")
-                if attempt < 2:
-                    time.sleep(2**attempt)
-                    continue
+                logger.exception(f"[instapeep] {username} error: {e}")
+                self.stats["instapeep_failed"] += 1
+
+        if response and response.status_code == 200:
+            data = response.json()
+            follower_count = data.get("follower_count")
+            if follower_count is not None:
+                logger.info(f"[instapeep] [{username}] [{int(follower_count)}]")
+                self.stats["instapeep_success"] += 1
+                return int(follower_count)
+            logger.warning(f"[instapeep] {username} no count in response")
+            return None
+
+        if response and response.status_code == 503:
+            err_msg = _get_error_message(response)
+            logger.warning(
+                f"[instapeep] {username} 503 service unavailable{f' - {err_msg}' if err_msg else ''}"
+            )
+
+        if response and response.status_code == 503:
+            self.instapeep_disabled = True
+
+        if response and response.status_code not in (200,):
+            self.stats["instapeep_failed"] += 1
+
+        try:
+            inflact_response = self.scraper.post(
+                inflact_url,
+                data=inflact_payload,
+                timeout=30,
+            )
+        except Exception as e:
+            logger.exception(f"[inflact] {username} error: {e}")
+            self.stats["inflact_failed"] += 1
+            return None
+
+        if inflact_response.status_code == 200:
+            inflact_data = inflact_response.json() or {}
+            profile = (inflact_data.get("data") or {}).get("profile") or {}
+
+            follower_count = (profile.get("engagement", {}) or {}).get("followers")
+            if follower_count is None:
+                follower_count = profile.get("followers")
+
+            if follower_count is not None:
+                logger.info(f"[inflact] [{username}] [{int(follower_count)}]")
+                self.stats["inflact_success"] += 1
+                return int(follower_count)
+
+            logger.warning(f"[inflact] {username} 200 but no count")
+            return None
+
+        self.stats["inflact_failed"] += 1
+        err_msg = _get_error_message(inflact_response)
+        if inflact_response.status_code == 429:
+            logger.warning(f"[inflact] {username} 429, trying next tier")
+        elif inflact_response.status_code == 503:
+            logger.warning(f"[inflact] {username} 503 provider overloaded{f' - {err_msg}' if err_msg else ''}")
+        else:
+            logger.warning(f"[inflact] {username} HTTP {inflact_response.status_code}{f' - {err_msg}' if err_msg else ''}")
 
         return None
 
@@ -248,12 +245,13 @@ class InstagramCollectorBase:
         embed = {
             "title": f"🚨 Instagram {report_type} Collection Failed",
             "description": (
-                "**Instapeep.com API is currently unavailable (HTTP 503 Service Unavailable)**\n\n"
-                "All follower data collection attempts failed. The API may be experiencing temporary downtime.\n\n"
-                "**Next steps:**\n"
-                "- Check https://instapeep.com status\n"
-                "- Retry collection manually when API recovers\n"
-                "- Consider implementing backup API endpoint"
+                "**Instagram follower data collection failed for one or more users.**\n\n"
+                "All available API endpoints were rate-limited or unavailable. "
+                "Some follower counts may be missing.\n\n"
+                "**Recommendations:**\n"
+                "- Retry collection in a few minutes\n"
+                "- Consider increasing delay between requests\n"
+                "- Monitor API rate limits"
             ),
             "color": 0xFF0000,
         }
@@ -266,7 +264,7 @@ class InstagramCollectorBase:
             if response.status_code != 204:
                 logger.warning(f"Discord webhook returned status {response.status_code}")
         except Exception as e:
-            logger.error(f"Error sending Discord API failure notification: {e}")
+            logger.exception(f"Error sending Discord API failure notification: {e}")
 
     def send_discord_notification(self, reports: List[Dict], report_type: str, period: str) -> None:
         """Send consolidated report to Discord webhook."""
@@ -332,31 +330,21 @@ class InstagramCollectorBase:
             if response.status_code != 204:
                 logger.warning(f"Discord webhook returned status {response.status_code}")
         except Exception as e:
-            logger.error(f"Error sending Discord message: {e}")
+            logger.exception(f"Error sending Discord message: {e}")
 
     def collect_current_data(self) -> Dict[str, int]:
         """Collect current follower data for all usernames."""
         current_data: Dict[str, int] = {}
 
         for username in self.usernames:
-            logger.info(f"Fetching data for {username}")
-            try:
-                count = self.get_follower_count(username)
-                if count is not None:
-                    current_data[username] = count
-                    logger.info(f"{username}: {count}")
-                else:
-                    logger.warning(f"Failed to fetch data for {username}")
-            except ApiUnavailableError as e:
-                logger.error(str(e))
-                logger.error("Stopping data collection for remaining usernames.")
-                break
+            count = self.get_follower_count(username)
+            if count is not None:
+                current_data[username] = count
 
             if username != self.usernames[-1]:
-                delay = random.uniform(5, 15)
-                logger.info(f"Sleeping for {delay:.2f} seconds")
-                time.sleep(delay)
+                time.sleep(random.uniform(5, 15))
 
+        self._save_stats()
         return current_data
 
     def get_previous_sunday(self) -> str:
