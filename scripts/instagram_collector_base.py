@@ -60,11 +60,11 @@ class InstagramCollectorBase:
             with open(self.config_file, "r") as f:
                 data = json.load(f)
                 return data.get("usernames", [])
-        except FileNotFoundError:
-            logger.error(f"Configuration file {self.config_file} not found")
+        except FileNotFoundError as e:
+            logger.exception(f"Configuration file {self.config_file} not found")
             sys.exit(1)
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in configuration file: {e}")
+            logger.exception(f"Invalid JSON in configuration file: {e}")
             sys.exit(1)
 
     def _load_history(self) -> Dict:
@@ -75,7 +75,7 @@ class InstagramCollectorBase:
         except FileNotFoundError:
             return {"daily": {}, "weekly": {}, "monthly": {}}
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in data file: {e}")
+            logger.exception(f"Invalid JSON in data file: {e}")
             return {"daily": {}, "weekly": {}, "monthly": {}}
 
     def _save_history(self, data: Dict) -> None:
@@ -150,7 +150,7 @@ class InstagramCollectorBase:
             try:
                 response = self.scraper.get(url, timeout=30)
             except Exception as e:
-                logger.error(f"[instapeep] {username} error: {e}")
+                logger.exception(f"[instapeep] {username} error: {e}")
                 self.stats["instapeep_failed"] += 1
 
         if response and response.status_code == 200:
@@ -182,7 +182,7 @@ class InstagramCollectorBase:
                 timeout=30,
             )
         except Exception as e:
-            logger.error(f"[inflact] {username} error: {e}")
+            logger.exception(f"[inflact] {username} error: {e}")
             self.stats["inflact_failed"] += 1
             return None
 
@@ -264,7 +264,7 @@ class InstagramCollectorBase:
             if response.status_code != 204:
                 logger.warning(f"Discord webhook returned status {response.status_code}")
         except Exception as e:
-            logger.error(f"Error sending Discord API failure notification: {e}")
+            logger.exception(f"Error sending Discord API failure notification: {e}")
 
     def send_discord_notification(self, reports: List[Dict], report_type: str, period: str) -> None:
         """Send consolidated report to Discord webhook."""
@@ -330,7 +330,7 @@ class InstagramCollectorBase:
             if response.status_code != 204:
                 logger.warning(f"Discord webhook returned status {response.status_code}")
         except Exception as e:
-            logger.error(f"Error sending Discord message: {e}")
+            logger.exception(f"Error sending Discord message: {e}")
 
     def collect_current_data(self) -> Dict[str, int]:
         """Collect current follower data for all usernames."""
