@@ -23,6 +23,13 @@ class InstagramMonthlyCollector(InstagramCollectorBase):
             logger.warning("No Discord webhook configured. Exiting.")
             return
 
+        # Check if this month's data already exists to skip the 2nd run
+        current_month_first_day = datetime.now(timezone.utc).replace(day=1).strftime('%Y-%m-%d')
+        history = self._load_history()
+        if history.get("monthly", {}).get(current_month_first_day):
+            logger.info(f"Monthly data for {current_month_first_day} already exists. Skipping second run.")
+            return
+
         history = self._load_history()
         current_data = self.collect_current_data()
         

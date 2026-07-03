@@ -167,8 +167,8 @@ Cumulative API fetch statistics tracked across all runs:
 | Workflow | Schedule | Description |
 |----------|----------|-------------|
 | Daily Tracker | `0 6,18 * * *` | Runs twice daily at 06:00 and 18:00 UTC (failsafe) |
-| Weekly Tracker | `30 6 * * 0` | Runs Sundays at 06:30 UTC |
-| Monthly Tracker | `0 7 1 * *` | Runs 1st of month at 07:00 UTC |
+| Weekly Tracker | `30 6,18 * * 0` | Runs twice on Sundays at 06:30 and 18:30 UTC (failsafe) |
+| Monthly Tracker | `0 7,19 1 * *` | Runs twice on the 1st at 07:00 and 19:00 UTC (failsafe) |
 | Release Notes | On Release | Sends Discord notification on new release |
 
 ### CI/CD
