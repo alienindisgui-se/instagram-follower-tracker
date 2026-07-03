@@ -23,7 +23,13 @@ class InstagramDailyCollector(InstagramCollectorBase):
             logger.warning("No Discord webhook configured. Exiting.")
             return
 
+        # Check if today's data already exists to skip the 2nd run
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         history = self._load_history()
+        if history.get("daily", {}).get(today):
+            logger.info(f"Data for today ({today}) already exists. Skipping second run.")
+            return
+
         current_data = self.collect_current_data()
         
         if not current_data:
