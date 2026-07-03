@@ -351,16 +351,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Note**: This tool uses Instapeep.com and Inflact.com APIs for data collection. Ensure compliance with Instagram's Terms of Service and respective API usage policies when using this system.
-
-## 🧪 Running Tests Locally
-
-```bash
-# Install test dependencies
-pip install pytest pytest-mock
-
-# Run full test suite
-python -m pytest tests/ -v
-
-# Run specific test file
-python -m pytest tests/test_instagram_collector_base.py -v
-```
