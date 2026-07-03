@@ -65,6 +65,11 @@ instagram-follower-tracker/
 
 ### Configuration Files
 
+#### `.env`
+```env
+IG_TRACKER_DISCORD_WEBHOOK=https://discord.com/api/webhooks/your/webhook/id
+```
+
 #### `config/instagram_tracker_settings.json`
 ```json
 {
@@ -72,6 +77,30 @@ instagram-follower-tracker/
     "username1",
     "username3"
   ]
+}
+```
+
+#### `config/instagram_api_settings.json`
+```json
+{
+  "api_order": [
+    "instapeep",
+    "inflact"
+  ],
+  "api_settings": {
+    "instapeep": {
+      "enabled": true,
+      "timeout": 30,
+      "retry": 2,
+      "backoff_factor": 1.5
+    },
+    "inflact": {
+      "enabled": true,
+      "timeout": 30,
+      "retry": 2,
+      "backoff_factor": 2.0
+    }
+  }
 }
 ```
 
@@ -137,7 +166,7 @@ Cumulative API fetch statistics tracked across all runs:
 
 | Workflow | Schedule | Description |
 |----------|----------|-------------|
-| Daily Tracker | `0 6 * * *` | Runs daily at 06:00 UTC |
+| Daily Tracker | `0 6,18 * * *` | Runs twice daily at 06:00 and 18:00 UTC (failsafe) |
 | Weekly Tracker | `30 6 * * 0` | Runs Sundays at 06:30 UTC |
 | Monthly Tracker | `0 7 1 * *` | Runs 1st of month at 07:00 UTC |
 | Release Notes | On Release | Sends Discord notification on new release |
