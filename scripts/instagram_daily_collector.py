@@ -6,7 +6,7 @@ Tracks Instagram follower counts with daily comparison reports.
 
 from datetime import datetime, timezone
 try:
-    from .instagram_collector_base import InstagramCollectorBase
+    from instagram_collector_base import InstagramCollectorBase
 except ImportError:
     from instagram_collector_base import InstagramCollectorBase
 import logging

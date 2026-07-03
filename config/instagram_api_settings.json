@@ -1,0 +1,25 @@
+{
+  "api_order": [
+    "instapeep",
+    "inflact"
+  ],
+  "api_settings": {
+    "instapeep": {
+      "enabled": true,
+      "timeout": 30,
+      "retry": 2,
+      "backoff_factor": 1.5
+    },
+    "inflact": {
+      "enabled": true,
+      "timeout": 30,
+      "retry": 2,
+      "backoff_factor": 2.0
+    }
+  },
+  "default_update_intervals": {
+    "daily": "0 6,18 * * *",
+    "weekly": "30 6 * * 0",
+    "monthly": "0 7 1 * *"
+  }
+}
