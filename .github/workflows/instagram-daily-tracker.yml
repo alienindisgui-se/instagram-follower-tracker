@@ -2,8 +2,8 @@ name: Instagram Daily Follower Tracker
 
 on:
   schedule:
-    # Run daily at 06:00 UTC
-    - cron: '0 6 * * *'
+    # Run twice daily at 06:00 and 18:00 UTC as a failsafe
+    - cron: '0 6,18 * * *'
   workflow_dispatch:
     # Allow manual triggering
 

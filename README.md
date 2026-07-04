@@ -65,6 +65,11 @@ instagram-follower-tracker/
 
 ### Configuration Files
 
+#### `.env`
+```env
+IG_TRACKER_DISCORD_WEBHOOK=https://discord.com/api/webhooks/your/webhook/id
+```
+
 #### `config/instagram_tracker_settings.json`
 ```json
 {
@@ -72,6 +77,30 @@ instagram-follower-tracker/
     "username1",
     "username3"
   ]
+}
+```
+
+#### `config/instagram_api_settings.json`
+```json
+{
+  "api_order": [
+    "instapeep",
+    "inflact"
+  ],
+  "api_settings": {
+    "instapeep": {
+      "enabled": true,
+      "timeout": 30,
+      "retry": 2,
+      "backoff_factor": 1.5
+    },
+    "inflact": {
+      "enabled": true,
+      "timeout": 30,
+      "retry": 2,
+      "backoff_factor": 2.0
+    }
+  }
 }
 ```
 
@@ -137,9 +166,9 @@ Cumulative API fetch statistics tracked across all runs:
 
 | Workflow | Schedule | Description |
 |----------|----------|-------------|
-| Daily Tracker | `0 6 * * *` | Runs daily at 06:00 UTC |
-| Weekly Tracker | `30 6 * * 0` | Runs Sundays at 06:30 UTC |
-| Monthly Tracker | `0 7 1 * *` | Runs 1st of month at 07:00 UTC |
+| Daily Tracker | `0 6,18 * * *` | Runs twice daily at 06:00 and 18:00 UTC (failsafe) |
+| Weekly Tracker | `30 6,18 * * 0` | Runs twice on Sundays at 06:30 and 18:30 UTC (failsafe) |
+| Monthly Tracker | `0 7,19 1 * *` | Runs twice on the 1st at 07:00 and 19:00 UTC (failsafe) |
 | Release Notes | On Release | Sends Discord notification on new release |
 
 ### CI/CD
@@ -322,16 +351,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Note**: This tool uses Instapeep.com and Inflact.com APIs for data collection. Ensure compliance with Instagram's Terms of Service and respective API usage policies when using this system.
-
-## 🧪 Running Tests Locally
-
-```bash
-# Install test dependencies
-pip install pytest pytest-mock
-
-# Run full test suite
-python -m pytest tests/ -v
-
-# Run specific test file
-python -m pytest tests/test_instagram_collector_base.py -v
-```
