@@ -1,23 +1,5 @@
 {
   "daily": {
-    "2026-07-09": {
-      "joakimlundell": 1243848,
-      "juliapuhakka": 95999,
-      "lisenbjorlund": 68160,
-      "pontusbjorlund": 177722,
-      "realbaronen": 36286,
-      "themotvikt": 5082,
-      "clueenews": 154261,
-      "chrippakryptovaluta": 147844,
-      "realskilleras": 3492,
-      "brott_och_blandat": 2374,
-      "fru.medvikt113": 1741,
-      "medvikt113": 1001,
-      "stefanhallgren": 6672,
-      "prefabandreas": 16222,
-      "alexceesay444": 88261,
-      "cissimusic": 94887
-    },
     "2026-07-10": {
       "joakimlundell": 1243836,
       "juliapuhakka": 95963,
@@ -719,6 +701,24 @@
       "prefabandreas": 16300,
       "alexceesay444": 87066,
       "cissimusic": 101874
+    },
+    "2026-09-04": {
+      "joakimlundell": 1240918,
+      "juliapuhakka": 94532,
+      "lisenbjorlund": 67973,
+      "pontusbjorlund": 174634,
+      "realbaronen": 35795,
+      "themotvikt": 5577,
+      "clueenews": 151653,
+      "chrippakryptovaluta": 146541,
+      "realskilleras": 3607,
+      "brott_och_blandat": 2398,
+      "fru.medvikt113": 1853,
+      "medvikt113": 1051,
+      "stefanhallgren": 7070,
+      "prefabandreas": 16296,
+      "alexceesay444": 87022,
+      "cissimusic": 101978
     }
   },
   "weekly": {
